@@ -63,6 +63,7 @@
       localStorage.setItem('hp_token', JSON.stringify({ jwt, exp: p.exp }));
     } catch (e) { /* ignore */ }
   }
+  function noAuto() { try { return sessionStorage.getItem('hp_noauto') === '1'; } catch (e) { return false; } }
   function showSignin(msg) {
     $('#app').hidden = true;
     $('#signin').hidden = false;
@@ -70,11 +71,11 @@
     const tryInit = () => {
       if (!window.google || !google.accounts) return setTimeout(tryInit, 200);
       google.accounts.id.initialize({
-        client_id: CFG.CLIENT_ID, auto_select: true, itp_support: true,
-        callback: r => { token = r.credential; saveToken(token); start(); },
+        client_id: CFG.CLIENT_ID, auto_select: !noAuto(), itp_support: true,
+        callback: r => { try { sessionStorage.removeItem('hp_noauto'); } catch (e) { /* ignore */ } token = r.credential; saveToken(token); start(); },
       });
       google.accounts.id.renderButton($('#gbutton'), { theme: 'filled_blue', size: 'large', shape: 'pill', text: 'signin_with' });
-      google.accounts.id.prompt();
+      if (!noAuto()) google.accounts.id.prompt();
     };
     tryInit();
   }
@@ -91,7 +92,11 @@
     if (data.error === 'auth') {
       token = null;
       try { localStorage.removeItem('hp_token'); } catch (e) { /* ignore */ }
-      showSignin('Please sign in again.');
+      // Stop the automatic re-sign-in so a rejected account doesn't loop.
+      try { sessionStorage.setItem('hp_noauto', '1'); } catch (e) { /* ignore */ }
+      if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+      showSignin(data.reason ? 'Sign-in was turned away: ' + data.reason
+        : "Sign-in was turned away by the planner's Google script. Check CLIENT_ID in Config, then deploy a new version.");
       throw new Error('auth');
     }
     if (data.error) { toast(data.error); throw new Error(data.error); }
