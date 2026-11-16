@@ -551,7 +551,7 @@ function parentDigest() {
   const flags = redFlags(tasks, todayStr());
   if (!flags.length) return;
   const body = flags.map(f => f.kind + ': ' + f.text).join('\n') + '\n\nOpen the parent view for details.';
-  MailApp.sendEmail(CONFIG.PARENT_EMAILS.join(','), 'Hudson Planner: ' + flags.length + ' thing' + (flags.length > 1 ? 's' : '') + ' to check', body);
+  MailApp.sendEmail([].concat(CONFIG.PARENT_EMAILS).join(','), 'Hudson Planner: ' + flags.length + ' thing' + (flags.length > 1 ? 's' : '') + ' to check', body);
 }
 
 /* ------------------------------------------------------------------ web API */
@@ -595,8 +595,8 @@ function verify(idToken) {
     email = String(info.email).toLowerCase();
     cache.put(key, email, 1800);
   }
-  if (email === CONFIG.STUDENT_EMAIL.toLowerCase()) return { email: email, role: 'student' };
-  if (CONFIG.PARENT_EMAILS.map(x => x.toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'parent' };
+  if (email === String(CONFIG.STUDENT_EMAIL).trim().toLowerCase()) return { email: email, role: 'student' };
+  if ([].concat(CONFIG.PARENT_EMAILS).map(x => String(x).trim().toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'parent' };
   return { fail: email + ' is not on the list in Config. Sign in with a family account, or add it and deploy a new version.' };
 }
 
