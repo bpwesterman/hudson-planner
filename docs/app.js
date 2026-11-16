@@ -411,6 +411,7 @@
     $('#foot').innerHTML = `Last calendar check ${esc(S.lastSync || 'not yet')} · <button class="act" id="refresh">Check calendars now</button> · <button class="act" id="signout">Sign out</button>`;
     $('#refresh').onclick = () => { toast('Checking calendars…'); api('sync'); };
     $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
+    $('#app').classList.toggle('wide', view === 'week' || view === 'status');
     const v = $('#view');
     v.innerHTML = '';
     ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, parent: renderParent }[view] || renderToday)(v);
@@ -482,7 +483,7 @@
     nav.querySelector('#wprev').onclick = () => { weekOffset--; render(); };
     nav.querySelector('#wnext').onclick = () => { weekOffset++; render(); };
     if (isStudent()) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Each assignment starts on a suggested day. Drag it to another day (long-press on the phone). Striped days are short.'; v.appendChild(p); }
-    const board = document.createElement('div'); board.className = 'board';
+    const board = document.createElement('div'); board.className = 'board week';
     for (let i = 0; i < 7; i++) {
       const d = addDays(mon, i);
       const shortDay = (S.short || {})[d];
@@ -614,6 +615,20 @@
     box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the Veracross grade detail for the Friday sweep"></textarea><div class="row"><button class="act primary" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
     v.appendChild(box);
     box.querySelector('#savegrades').onclick = () => { const t = box.querySelector('#grades').value.trim(); if (t) api('grades', { text: t }).then(() => toast('Grades saved')); };
+    const hin = document.createElement('h2'); hin.textContent = 'Recently turned in'; v.appendChild(hin);
+    const since = addDays(S.today, -14);
+    const turned = S.tasks.filter(t => t.turnedInAt && t.turnedInAt.slice(0, 10) >= since && isWork(t))
+      .sort((a, b) => a.turnedInAt < b.turnedInAt ? 1 : -1).slice(0, 20);
+    const tl = document.createElement('div'); tl.className = 'list';
+    tl.innerHTML = turned.map(t => {
+      const doneDay = (t.doneAt || t.turnedInAt).slice(0, 10), inDay = t.turnedInAt.slice(0, 10);
+      const tags = [];
+      if (t.due && doneDay > t.due) tags.push('<span class="tag warn">Done late</span>');
+      if (t.due && inDay > t.due) tags.push('<span class="tag warn">Turned in late</span>');
+      if (!tags.length) tags.push('<span class="tag good">On time</span>');
+      return `<div class="task" style="--c:${cls(t).color}"><div class="main"><div class="t">${esc(cls(t).name ? cls(t).name + ': ' : '')}${esc(t.title)}</div><div class="meta"><span>Due ${esc(nice(t.due))}</span><span>Done ${esc(nice(doneDay))}</span><span>Turned in ${esc(nice(inDay))}</span>${tags.join('')}</div></div></div>`;
+    }).join('') || '<div class="empty">Nothing turned in over the last two weeks.</div>';
+    v.appendChild(tl);
     const h4 = document.createElement('h2'); h4.textContent = 'Recent points'; v.appendChild(h4);
     const pts = document.createElement('div'); pts.className = 'list';
     pts.innerHTML = (S.recentPoints || []).map(r => `<div class="hint">${esc(r.date)} · +${esc(r.points)} · ${esc(r.reason)}</div>`).join('') || '<div class="empty">No points yet.</div>';

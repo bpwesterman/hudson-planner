@@ -55,6 +55,8 @@ h2{font-family:var(--display);font-size:15px;text-transform:uppercase;letter-spa
 .study label{display:flex;gap:10px;align-items:center;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;min-height:48px;cursor:pointer}
 .study input{width:22px;height:22px;accent-color:var(--accent)}
 .board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:12px;overflow-x:auto;padding-bottom:8px}
+.wrap.wide{max-width:none}
+@media (min-width:1200px){.board.week{grid-auto-columns:minmax(0,1fr);overflow-x:visible}}
 .col{background:var(--surface-2);border-radius:var(--r);padding:10px;display:flex;flex-direction:column;gap:8px;min-height:240px}
 .col.short{background:repeating-linear-gradient(135deg,var(--surface-2),var(--surface-2) 10px,var(--bg) 10px,var(--bg) 20px)}
 .col header{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
