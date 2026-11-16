@@ -671,6 +671,7 @@
     sub.innerHTML = Object.keys(CLASSES).map(k => `<button data-c="${k}" style="--c:${CLASSES[k].color}" aria-pressed="${classTab === k}">${CLASSES[k].name}</button>`).join('');
     sub.querySelectorAll('button').forEach(b => b.onclick = () => { classTab = b.dataset.c; render(); });
     v.appendChild(sub);
+    if (isStudent()) bookVisitCard(v, classTab);
     const c = CLASSES[classTab];
     const card = document.createElement('div'); card.className = 'card';
     card.innerHTML = `<h3>${esc(c.name)}</h3><div class="hint">Teacher: ${esc((S.teachers || {})[classTab] || '')}${S.periods && S.periods[classTab] ? ' · Period ' + esc(S.periods[classTab]) : ''}</div><div>Turn in: ${esc(c.turnIn)}</div>${c.late ? `<div>${esc(c.late)}</div>` : ''}`;
@@ -679,6 +680,59 @@
     section(v, 'Missing', mine.filter(missing), { action: true }, 'Nothing missing.');
     section(v, 'Coming up', mine.filter(t => t.due >= S.today && ['in', 'graded'].indexOf(t.status) < 0 && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
     section(v, 'Recently turned in', mine.filter(t => t.status === 'in').sort((a, b) => a.due > b.due ? -1 : 1).slice(0, 8), {}, 'Nothing yet.');
+  }
+
+  // Classes page: book a visit with this class's teacher. Pick a day, see its schedule, pick a time, add it.
+  function bookVisitCard(v, k) {
+    const teacher = (S.teachers || {})[k] || 'your teacher';
+    const days = Object.keys(S.school || {}).filter(d => d >= S.today && d <= addDays(S.today, 21) && canVisit(S.school[d])).sort();
+    const booked = S.tasks.filter(t => t.type === 'visit' && t.cls === k && t.status !== 'done' && t.visitSlot && t.doDay >= S.today).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = `<h3>See ${esc(teacher)}</h3>
+      <div class="hint">Book a one-on-one visit. Pick a day, then a time.</div>
+      ${booked.length ? `<div class="hint">Already booked: ${booked.map(t => esc(t.visitSlot.replace(/ \(.*\)$/, '') + ' · ' + short(t.doDay))).join(', ')}</div>` : ''}
+      ${days.length ? pickerHtml(days, '') : '<div class="hint">No school days with tutorial, activities or 6th period in the next three weeks.</div>'}
+      <div id="bv-day"></div>
+      <div id="bv-rest" hidden>
+        <label class="field">What do you want to go over?<input id="bv-what" maxlength="120" placeholder="the Unit 4 quiz, my missing work…"></label>
+        <div class="email" id="bv-draft"></div>
+        <div class="row"><button class="act" id="bv-copy">Copy email</button><a class="act" id="bv-mail" href="#" target="_blank" rel="noopener">Open in email</a></div>
+        <div class="row"><button class="act primary" id="bv-add">Add visit to my plan</button></div>
+      </div>`;
+    v.appendChild(card);
+    let day = '', slot = '';
+    const t = { cls: k };
+    const draft = () => {
+      const what = card.querySelector('#bv-what').value.trim() || 'how I am doing in class';
+      const txt = `Hi ${teacher},\n\nCould I come see you ${/^(Tutorial|Activities|6th)/.test(slot) ? 'during ' + slot.replace(/ \d.*$/, '').toLowerCase() : 'at a time that works for you'} on ${nice(day)}? I'd like to go over ${what}.\n\nThank you,\n${S.studentName || ''}`;
+      card.querySelector('#bv-draft').textContent = txt;
+      card.querySelector('#bv-mail').href = `mailto:?subject=${encodeURIComponent('Could I come see you?')}&body=${encodeURIComponent(txt)}`;
+    };
+    const showDay = d => {
+      day = d; slot = '';
+      card.querySelector('#bv-rest').hidden = true;
+      card.querySelector('#bv-day').innerHTML = `${scheduleHtml(d)}<div class="slots">${slotsForDay(d, t).map(x => `<button class="slot" data-s="${esc(x)}" aria-pressed="false">${esc(x)}</button>`).join('')}</div>`;
+      card.querySelectorAll('#bv-day .slot').forEach(b => b.onclick = () => {
+        slot = b.dataset.s;
+        card.querySelectorAll('#bv-day .slot').forEach(o => o.setAttribute('aria-pressed', o === b));
+        card.querySelector('#bv-rest').hidden = false;
+        draft();
+      });
+    };
+    card.querySelectorAll('.pday[data-d]').forEach(b => b.onclick = () => {
+      card.querySelectorAll('.pday[data-d]').forEach(o => o.setAttribute('aria-pressed', o === b));
+      showDay(b.dataset.d);
+    });
+    card.querySelector('#bv-what').oninput = draft;
+    card.querySelector('#bv-copy').onclick = () => {
+      navigator.clipboard.writeText(card.querySelector('#bv-draft').textContent).then(() => toast('Copied. Paste it into your school email.'), () => toast('Select the text and copy it.'));
+    };
+    card.querySelector('#bv-add').onclick = () => {
+      if (!day || !slot) return;
+      const what = card.querySelector('#bv-what').value.trim();
+      api('add', { task: { type: 'visit', cls: k, due: day, visitSlot: slot, title: `See ${teacher}${what ? ': ' + what : ''}` } })
+        .then(() => toast(`Visit added for ${short(day)}`), () => {});
+    };
   }
 
   function renderTests(v) {
