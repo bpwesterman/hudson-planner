@@ -829,6 +829,12 @@ function handle(req, who) {
         type: type, due: due, paper: !!p.paper, status: isParent ? 'suggested' : 'todo',
         doDay: type === 'assignment' ? suggestDoDay(due, ctx) : due,
       });
+      // A visit he books himself from the Classes page comes with its time and goes on the plan calendar.
+      if (type === 'visit' && !isParent && p.visitSlot) {
+        t.visitSlot = String(p.visitSlot).slice(0, 80);
+        t.doDay = due;
+        syncVisitEvent(t);
+      }
       tasks.push(t);
       if (!isParent) ensureExtras(t, tasks, ctx, CONFIG.TEACHERS || {});
     } else if (req.action === 'accept') {
