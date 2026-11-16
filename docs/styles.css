@@ -122,6 +122,11 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .field input,.field select,.field textarea{font:15px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);min-height:44px}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .row>*{flex:1;min-width:120px}
+.row.adj{align-items:flex-end}
+.row.adj .field:not(.grow){flex:0 0 140px}
+.row.adj .grow{flex:1 1 220px}
+.act.danger{background:transparent;color:#c62828;border:1px solid currentColor}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .act.danger{color:#ff8a80}}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{flex:1;min-width:90px;font:600 14px var(--body);min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
