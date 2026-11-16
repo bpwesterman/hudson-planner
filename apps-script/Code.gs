@@ -564,7 +564,10 @@ function doPost(e) {
   try {
     const req = JSON.parse(e.postData.contents);
     const who = verify(req.idToken);
-    if (!who) return json({ error: 'auth' });
+    if (who.fail) {
+      console.warn('Sign-in rejected: ' + who.fail);
+      return json({ error: 'auth', reason: who.fail });
+    }
     return json(handle(req, who));
   } catch (err) {
     return json({ error: String(err && err.message || err) });
@@ -575,23 +578,26 @@ function json(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 
+/** Returns { email, role } for a family account, or { fail: reason } explaining the rejection. */
 function verify(idToken) {
-  if (!idToken) return null;
+  if (!idToken) return { fail: 'No sign-in token was sent.' };
   const cache = CacheService.getScriptCache();
   const key = 'tok' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken));
-  const hit = cache.get(key);
-  let email = hit;
+  let email = cache.get(key);
   if (!email) {
     const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken), { muteHttpExceptions: true });
-    if (res.getResponseCode() !== 200) return null;
+    if (res.getResponseCode() !== 200) return { fail: 'Google did not accept the sign-in token (code ' + res.getResponseCode() + '). Try signing in again.' };
     const info = JSON.parse(res.getContentText());
-    if (info.aud !== CONFIG.CLIENT_ID || String(info.email_verified) !== 'true') return null;
+    if (info.aud !== CONFIG.CLIENT_ID) {
+      return { fail: 'Client ID mismatch. The website uses one ending "' + String(info.aud).slice(-30) + '", but the script\'s Config has "' + String(CONFIG.CLIENT_ID).slice(-30) + '". Fix Config, then deploy a new version.' };
+    }
+    if (String(info.email_verified) !== 'true') return { fail: 'This Google account\'s email is not verified.' };
     email = String(info.email).toLowerCase();
     cache.put(key, email, 1800);
   }
   if (email === CONFIG.STUDENT_EMAIL.toLowerCase()) return { email: email, role: 'student' };
   if (CONFIG.PARENT_EMAILS.map(x => x.toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'parent' };
-  return null;
+  return { fail: email + ' is not on the list in Config. Sign in with a family account, or add it and deploy a new version.' };
 }
 
 function handle(req, who) {
