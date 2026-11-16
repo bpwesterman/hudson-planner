@@ -671,15 +671,23 @@
     sub.innerHTML = Object.keys(CLASSES).map(k => `<button data-c="${k}" style="--c:${CLASSES[k].color}" aria-pressed="${classTab === k}">${CLASSES[k].name}</button>`).join('');
     sub.querySelectorAll('button').forEach(b => b.onclick = () => { classTab = b.dataset.c; render(); });
     v.appendChild(sub);
-    if (isStudent()) bookVisitCard(v, classTab);
+    // Two columns on wide screens (visit card on the right). On a phone the visit card sits
+    // between "Coming up" and "Recently turned in".
+    const grid = document.createElement('div'); grid.className = 'cgrid';
+    const left = document.createElement('div'); left.className = 'c-left';
+    const main = document.createElement('div'); main.className = 'block c-main';
+    const recent = document.createElement('div'); recent.className = 'block c-recent';
+    const side = document.createElement('div'); side.className = 'block c-side';
+    left.append(main, recent); grid.append(left, side); v.appendChild(grid);
     const c = CLASSES[classTab];
     const card = document.createElement('div'); card.className = 'card';
     card.innerHTML = `<h3>${esc(c.name)}</h3><div class="hint">Teacher: ${esc((S.teachers || {})[classTab] || '')}${S.periods && S.periods[classTab] ? ' · Period ' + esc(S.periods[classTab]) : ''}</div><div>Turn in: ${esc(c.turnIn)}</div>${c.late ? `<div>${esc(c.late)}</div>` : ''}`;
-    v.appendChild(card);
+    main.appendChild(card);
     const mine = S.tasks.filter(t => t.cls === classTab);
-    section(v, 'Missing', mine.filter(missing), { action: true }, 'Nothing missing.');
-    section(v, 'Coming up', mine.filter(t => t.due >= S.today && ['in', 'graded'].indexOf(t.status) < 0 && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
-    section(v, 'Recently turned in', mine.filter(t => t.status === 'in').sort((a, b) => a.due > b.due ? -1 : 1).slice(0, 8), {}, 'Nothing yet.');
+    section(main, 'Missing', mine.filter(missing), { action: true }, 'Nothing missing.');
+    section(main, 'Coming up', mine.filter(t => t.due >= S.today && ['in', 'graded'].indexOf(t.status) < 0 && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
+    if (isStudent()) bookVisitCard(side, classTab); else side.remove();
+    section(recent, 'Recently turned in', mine.filter(t => t.status === 'in').sort((a, b) => a.due > b.due ? -1 : 1).slice(0, 8), {}, 'Nothing yet.');
   }
 
   // Classes page: book a visit with this class's teacher. Pick a day, see its schedule, pick a time, add it.
@@ -687,7 +695,7 @@
     const teacher = (S.teachers || {})[k] || 'your teacher';
     const days = Object.keys(S.school || {}).filter(d => d >= S.today && d <= addDays(S.today, 21) && canVisit(S.school[d])).sort();
     const booked = S.tasks.filter(t => t.type === 'visit' && t.cls === k && t.status !== 'done' && t.visitSlot && t.doDay >= S.today).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
-    const card = document.createElement('div'); card.className = 'card';
+    const card = document.createElement('div'); card.className = 'card bookv';
     card.innerHTML = `<h3>See ${esc(teacher)}</h3>
       <div class="hint">Book a one-on-one visit. Pick a day, then a time.</div>
       ${booked.length ? `<div class="hint">Already booked: ${booked.map(t => esc(t.visitSlot.replace(/ \(.*\)$/, '') + ' · ' + short(t.doDay))).join(', ')}</div>` : ''}

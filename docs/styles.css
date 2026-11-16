@@ -123,6 +123,24 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .field input,.field select,.field textarea{font:15px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);min-height:44px}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .row>*{flex:1;min-width:120px}
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start;margin-top:12px}
+.c-left{display:flex;flex-direction:column;gap:10px;min-width:0}
+.cgrid:not(:has(.c-side)){grid-template-columns:minmax(0,1fr)}
+@media (max-width:760px){
+  .cgrid{grid-template-columns:minmax(0,1fr)}
+  .c-left{display:contents}
+  .c-main{order:1}.c-side{order:2}.c-recent{order:3}
+}
+.bookv{gap:8px;padding:12px}
+.bookv h3{font-size:16px}
+.bookv .dpick{gap:4px}
+.bookv .pday{min-height:40px;font-size:13px;border-radius:8px;padding:2px}
+.bookv .pday span{font-size:10px}
+.bookv .sched{font-size:13px;padding:8px}
+.bookv .sched-p li{font-size:12px;padding:3px 6px}
+.bookv .slot{font-size:12px;padding:6px 8px;min-height:36px}
+.bookv .email{font-size:12px}
+.bookv .row>*{min-width:0}
 .row.adj{align-items:flex-end}
 .row.adj .field:not(.grow){flex:0 0 140px}
 .row.adj .grow{flex:1 1 220px}
