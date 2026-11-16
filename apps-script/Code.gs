@@ -10,7 +10,8 @@
 
 const FIELDS = ['id', 'source', 'sourceId', 'cls', 'title', 'type', 'due', 'doDay', 'status', 'paper',
   'pinned', 'createdAt', 'doneAt', 'turnedInAt', 'minutes', 'slipReason', 'slipDate', 'visitFor',
-  'visitSlot', 'fixit', 'note', 'pointsGiven', 'updatedAt'];
+  'visitSlot', 'fixit', 'note', 'pointsGiven', 'updatedAt',
+  'conflict', 'conflictState', 'conflictAt', 'gradebookItem', 'confirmedGrade', 'confirmedNote', 'confirmedAt'];
 const OPEN = ['todo', 'doing'];
 const SHEETS = {
   Tasks: FIELDS,
@@ -130,6 +131,8 @@ function readTasks() {
 /** Writes every task back in one call. Small data set, so this is simplest. */
 function writeTasks(tasks) {
   const sh = sheet('Tasks');
+  // New columns are added to the header as the app grows.
+  if (sh.getLastColumn() < FIELDS.length) sh.getRange(1, 1, 1, FIELDS.length).setValues([FIELDS]).setFontWeight('bold');
   const rows = tasks.map(t => FIELDS.map(f => (t[f] === undefined || t[f] === null) ? '' : t[f]));
   sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), FIELDS.length).clearContent();
   if (rows.length) {
@@ -354,6 +357,135 @@ function recurring(tasks, ctx) {
       });
     });
   }
+}
+
+/* ------------------------------------------------------------------ gradebook check */
+
+const MONTH_IDX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const DATE_CELL = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})$/i;
+const CLASS_WORDS = { Chem: /chem/i, Photo: /photo/i, Alg: /alg/i, Hist: /hist/i, Span: /span|espa/i, Eng: /engl/i };
+
+/** "Nov 15" -> the most recent matching date (a date more than two months ahead belongs to last year). */
+function gradebookDate(mon, day, today) {
+  const y = Number(today.slice(0, 4));
+  const pad = n => (n < 10 ? '0' : '') + n;
+  let d = y + '-' + pad(MONTH_IDX[mon.slice(0, 3).toLowerCase()] + 1) + '-' + pad(Number(day));
+  if (d > addDays(today, 60)) d = (y - 1) + d.slice(4);
+  return d;
+}
+
+/**
+ * Reads a pasted Veracross "Grade Detail" page. Works whether the paste keeps table cells on one
+ * line separated by tabs, or puts each cell on its own line. Class headers look like
+ * "ALGEBRA 2 (3) - Mr. Smith"; assignment rows are Due date, Assignment, Score, Grade, Earned, Possible.
+ */
+function parseGradebook(text, periods, today) {
+  const byPeriod = {};
+  Object.keys(periods || {}).forEach(k => { byPeriod[periods[k]] = k; });
+  const cells = [];
+  String(text).replace(/\r/g, '').split('\n').forEach(line => line.split('\t').forEach(c => {
+    c = c.replace(/ /g, ' ').trim();
+    if (c) cells.push(c);
+  }));
+  const items = [];
+  let cls = '';
+  for (let i = 0; i < cells.length; i++) {
+    const c = cells[i];
+    const head = c.match(/^(.+?)\s*\((\d)\)\s*[-–]\s*\S/);
+    if (head) {
+      cls = byPeriod[head[2]] || Object.keys(CLASS_WORDS).find(k => CLASS_WORDS[k].test(head[1])) || '';
+      continue;
+    }
+    const d = c.match(DATE_CELL);
+    if (!d || i + 1 >= cells.length) continue;
+    const name = cells[i + 1];
+    if (DATE_CELL.test(name) || /^[\d.\s/%-]+$/.test(name)) continue;
+    let j = i + 2;
+    let score = cells[j] || '';
+    if (DATE_CELL.test(score) || /^-?[\d.]+%?$/.test(score)) score = ''; else j++;
+    let earned = NaN, possible = NaN;
+    if (/^-?[\d.]+%$/.test(cells[j] || '')) j++;
+    if (/^-?[\d.]+$/.test(cells[j] || '')) { earned = Number(cells[j]); j++; }
+    if (/^[\d.]+$/.test(cells[j] || '')) { possible = Number(cells[j]); j++; }
+    const frac = score.match(/^(-?[\d.]+)\s*\/\s*([\d.]+)$/);
+    if (frac) { if (isNaN(earned)) earned = Number(frac[1]); if (isNaN(possible)) possible = Number(frac[2]); }
+    items.push({ cls: cls, date: gradebookDate(d[1], d[2], today), name: name, score: score, earned: earned, possible: possible });
+    i = j - 1;
+  }
+  return items;
+}
+
+/** What the gradebook says that a turned-in assignment shouldn't: '' when nothing is wrong. */
+function gradebookProblem(it) {
+  const s = it.score.toLowerCase();
+  if (/not\s*turned\s*in/.test(s)) return 'Not Turned In';
+  if (/missing/.test(s)) return 'Missing';
+  if (/incomplete/.test(s)) return 'Incomplete';
+  if (/\blate\b/.test(s)) return 'Late';
+  if (it.possible > 0 && it.earned === 0) return (it.score && !/^[\d.\s/]+$/.test(it.score) ? '"' + it.score + '" but ' : '') + '0/' + it.possible;
+  return '';
+}
+
+const MATCH_STOP = ['the', 'a', 'an', 'and', 'of', 'for', 'to', 'on', 'in', 'at', 'assignment', 'due', 'pg', 'p'];
+function matchWords(s) {
+  return String(s).toLowerCase().replace(/&/g, ' ').replace(/[^a-z0-9/.]+/g, ' ').split(/\s+/)
+    .map(w => w.replace(/^\.+|\.+$/g, '')).filter(w => w && MATCH_STOP.indexOf(w) < 0);
+}
+/** 0..1: how much two assignment names share, allowing short forms such as "hw" vs "homework". */
+function nameMatch(a, b) {
+  const A = matchWords(a), B = matchWords(b);
+  if (!A.length || !B.length) return 0;
+  const same = (x, y) => x === y || (x.length >= 3 && y.length >= 3 && (x.indexOf(y) === 0 || y.indexOf(x) === 0));
+  const hitA = A.filter(w => B.some(x => same(w, x))).length;
+  const hitB = B.filter(w => A.some(x => same(w, x))).length;
+  return (hitA / A.length + hitB / B.length) / 2;
+}
+function dayGap(a, b) {
+  return Math.abs((new Date(a + 'T12:00:00Z') - new Date(b + 'T12:00:00Z')) / 864e5);
+}
+/** Best task for a gradebook row: same class, due within 4 days, names alike. */
+function matchTask(it, tasks) {
+  let best = null, bestScore = 0;
+  tasks.forEach(t => {
+    if (['assignment', 'quiz', 'test', 'routine'].indexOf(t.type) < 0 || !t.due) return;
+    if (it.cls && t.cls && t.cls !== it.cls) return;
+    const gap = dayGap(it.date, t.due);
+    if (gap > 4) return;
+    const sim = nameMatch(it.name, t.title);
+    if (sim < 0.3) return;
+    const score = sim - gap * 0.08;
+    if (score > bestScore) { best = t; bestScore = score; }
+  });
+  return best;
+}
+
+/** Compares a pasted gradebook with what Hudson marked turned in, and flags the conflicts. */
+function checkGradebook(text, tasks) {
+  const today = todayStr();
+  const items = parseGradebook(text, classPeriods(), today);
+  const res = { checkedAt: nowStamp(), read: items.length, classes: [], newConflicts: 0, problems: [] };
+  items.forEach(it => {
+    if (it.cls && res.classes.indexOf(it.cls) < 0) res.classes.push(it.cls);
+    const problem = gradebookProblem(it);
+    if (!problem) return;
+    const t = matchTask(it, tasks);
+    if (t && ['in', 'graded'].indexOf(t.status) >= 0) {
+      if (!t.conflictState) {
+        t.conflict = problem;
+        t.conflictState = 'open';
+        t.conflictAt = nowStamp();
+        t.gradebookItem = it.name + ' (' + it.date + ')';
+        t.updatedAt = nowStamp();
+        res.newConflicts++;
+      }
+      return;
+    }
+    // Problems Hudson hasn't claimed as turned in: listed for parents, no conflict.
+    res.problems.push({ cls: it.cls, date: it.date, name: it.name.slice(0, 80), says: problem, inPlanner: !!t });
+  });
+  res.problems = res.problems.slice(-40);
+  PropertiesService.getScriptProperties().setProperty('GRADE_CHECK', JSON.stringify(res));
+  return res;
 }
 
 /* ------------------------------------------------------------------ sync */
@@ -587,6 +719,9 @@ function redFlags(tasks, today) {
     if (t.type === 'visit' && t.visitFor && t.status !== 'done' && t.doDay < today) {
       flags.push({ kind: 'Visit missed', text: t.title, id: t.id });
     }
+    if (t.conflictState === 'open') {
+      flags.push({ kind: 'Gradebook disagrees', text: label(t) + ': marked turned in, gradebook says ' + t.conflict, id: t.id });
+    }
     if (t.slipReason && t.slipDate >= addDays(today, -7)) {
       flags.push({ kind: 'Missed plan', text: label(t) + ' — reason: ' + t.slipReason, id: t.id });
     }
@@ -663,6 +798,7 @@ function handle(req, who) {
     const byId = {};
     tasks.forEach(t => { byId[t.id] = t; });
     let gained = 0;
+    let gradeResult = null;
 
     if (req.action === 'save') {
       const t = byId[String(req.task.id)];
@@ -765,6 +901,16 @@ function handle(req, who) {
     } else if (req.action === 'grades') {
       if (who.role !== 'parent') throw new Error('Not allowed');
       appendRow('Grades', { pastedAt: nowStamp(), by: who.email, text: String(req.text || '').slice(0, 45000) });
+      gradeResult = checkGradebook(String(req.text || ''), tasks);
+    } else if (req.action === 'confirmGrade') {
+      if (who.role !== 'parent') throw new Error('Only a parent can confirm a grade');
+      const t = byId[String(req.id)];
+      if (!t || !t.conflictState) throw new Error('Task not found');
+      t.conflictState = 'resolved';
+      t.confirmedGrade = String(req.grade || '').trim().slice(0, 40);
+      t.confirmedNote = String(req.note || '').trim().slice(0, 500);
+      t.confirmedAt = nowStamp();
+      t.updatedAt = nowStamp();
     } else {
       throw new Error('Unknown action');
     }
@@ -772,6 +918,7 @@ function handle(req, who) {
     writeTasks(tasks);
     const res = loadAll(who, tasks);
     res.gained = gained;
+    if (gradeResult) res.gradeResult = gradeResult;
     return res;
   } finally {
     lock.releaseLock();
@@ -782,7 +929,7 @@ function loadAll(who, tasksIn) {
   const tasks = tasksIn || readTasks();
   const today = todayStr();
   const cutoff = addDays(today, -45);
-  const visible = tasks.filter(t => t.due >= cutoff || OPEN.indexOf(t.status) >= 0 || t.status === 'done' || t.fixit);
+  const visible = tasks.filter(t => t.due >= cutoff || OPEN.indexOf(t.status) >= 0 || t.status === 'done' || t.fixit || t.conflictState);
   const school = schoolDays(addDays(today, -7), addDays(today, 42));
   const busy = busyEvents(addDays(today, -7), addDays(today, 42));
   const short = shortFromBusy(busy);
@@ -799,6 +946,7 @@ function loadAll(who, tasksIn) {
     const g = readRows('Grades');
     out.lastGrades = g.length ? g[g.length - 1] : null;
     out.recentPoints = readRows('Points').slice(-20).reverse();
+    try { out.gradeCheck = JSON.parse(PropertiesService.getScriptProperties().getProperty('GRADE_CHECK') || 'null'); } catch (e) { out.gradeCheck = null; }
   }
   return out;
 }

@@ -1,18 +1,18 @@
 /* Layout: phone-first single column app; week and status boards scroll sideways inside their own track */
 :root{
   --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eceef3; --fg:#171a22; --muted:#5d6475; --line:#d9dce4;
-  --accent:#3856d6; --accent-fg:#ffffff; --warn:#b26a00; --warn-bg:#fff2dc; --good:#1d8a52; --good-bg:#e1f5ea;
+  --accent:#3856d6; --accent-fg:#ffffff; --warn:#b26a00; --warn-bg:#fff2dc; --good:#1d8a52; --good-bg:#e1f5ea; --bad:#c62828; --bad-bg:#fde7e7;
   --chem:#0f9d8f; --alg:#3856d6; --eng:#a04ad0; --hist:#c0662a; --span:#d23f6b; --photo:#5b7a10;
   --display:"Outfit",system-ui,sans-serif; --body:"Inter",system-ui,-apple-system,sans-serif;
   --r:12px;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0f1117; --surface:#181b24; --surface-2:#222633; --fg:#eef0f6; --muted:#9aa1b4; --line:#2c3141;
-  --accent:#7b93ff; --accent-fg:#0f1117; --warn:#ffb648; --warn-bg:#3a2a10; --good:#4fd18e; --good-bg:#12301f;
+  --accent:#7b93ff; --accent-fg:#0f1117; --warn:#ffb648; --warn-bg:#3a2a10; --good:#4fd18e; --good-bg:#12301f; --bad:#ff8a80; --bad-bg:#3d1616;
   --chem:#2cc7b6; --alg:#7b93ff; --eng:#c584f0; --hist:#f0905a; --span:#ff6f97; --photo:#9cc23a; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0f1117; --surface:#181b24; --surface-2:#222633; --fg:#eef0f6; --muted:#9aa1b4; --line:#2c3141;
-  --accent:#7b93ff; --accent-fg:#0f1117; --warn:#ffb648; --warn-bg:#3a2a10; --good:#4fd18e; --good-bg:#12301f;
+  --accent:#7b93ff; --accent-fg:#0f1117; --warn:#ffb648; --warn-bg:#3a2a10; --good:#4fd18e; --good-bg:#12301f; --bad:#ff8a80; --bad-bg:#3d1616;
   --chem:#2cc7b6; --alg:#7b93ff; --eng:#c584f0; --hist:#f0905a; --span:#ff6f97; --photo:#9cc23a; color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -40,6 +40,7 @@ h2{font-family:var(--display);font-size:15px;text-transform:uppercase;letter-spa
 .task .meta{font-size:13px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
 .tag{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--surface-2);color:var(--fg)}
 .tag.warn{background:var(--warn-bg);color:var(--warn)}
+.tag.bad{background:var(--bad-bg);color:var(--bad)}
 .tag.good{background:var(--good-bg);color:var(--good)}
 .act{font:600 14px var(--body);border:0;border-radius:10px;padding:10px 14px;min-height:44px;cursor:pointer;background:var(--surface-2);color:var(--fg);white-space:nowrap}
 .act.primary{background:var(--accent);color:var(--accent-fg)}
@@ -125,8 +126,7 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .row.adj{align-items:flex-end}
 .row.adj .field:not(.grow){flex:0 0 140px}
 .row.adj .grow{flex:1 1 220px}
-.act.danger{background:transparent;color:#c62828;border:1px solid currentColor}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .act.danger{color:#ff8a80}}
+.act.danger{background:transparent;color:var(--bad);border:1px solid currentColor}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{flex:1;min-width:90px;font:600 14px var(--body);min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
@@ -140,6 +140,13 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .flag{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:10px;background:var(--warn-bg);color:var(--fg)}
 .flag b{color:var(--warn);white-space:nowrap}
 .flag.ok{background:var(--good-bg)}
+.conflict{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:var(--bad-bg);border:1px solid var(--bad);border-left:6px solid var(--bad)}
+.conflict .t{font-weight:600}
+.conflict .says{color:var(--bad);font-weight:600;font-size:14px}
+.conflict .act{align-self:flex-start;background:var(--bad);color:#fff}
+.conflict.done{background:var(--surface);border-color:var(--line);border-left-color:var(--good)}
+.conflict.done .act{background:var(--surface-2);color:var(--fg)}
+.gprob{font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)}
 .flag.ok b{color:var(--good)}
 .stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .stat div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
