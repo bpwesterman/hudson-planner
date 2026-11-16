@@ -501,7 +501,6 @@
     $('#foot').innerHTML = `Last calendar check ${esc(S.lastSync || 'not yet')} · <button class="act" id="refresh">Check calendars now</button> · <button class="act" id="signout">Sign out</button>`;
     $('#refresh').onclick = () => { toast('Checking calendars…'); api('sync'); };
     $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
-    $('#app').classList.toggle('wide', view === 'week' || view === 'status');
     const v = $('#view');
     v.innerHTML = '';
     ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, parent: renderParent }[view] || renderToday)(v);
