@@ -516,12 +516,58 @@
     return list;
   }
 
+  /* ---------------- gradebook conflicts ---------------- */
+  const openConflicts = () => S.tasks.filter(t => t.conflictState === 'open').sort((a, b) => a.due < b.due ? -1 : 1);
+  const conflictName = t => `${cls(t).name ? cls(t).name + ': ' : ''}${t.title}`;
+  function conflictList(parent, items, heading) {
+    if (heading) { const h = document.createElement('h2'); h.textContent = heading; parent.appendChild(h); }
+    const list = document.createElement('div'); list.className = 'list';
+    items.forEach(t => {
+      const el = document.createElement('div');
+      const done = t.conflictState === 'resolved';
+      el.className = 'conflict' + (done ? ' done' : '');
+      const marked = t.turnedInAt ? ` on ${nice(t.turnedInAt.slice(0, 10))}` : '';
+      el.innerHTML = `<div class="t">${esc(conflictName(t))}</div>
+        <div class="hint">Due ${esc(nice(t.due))} · ${isStudent() ? 'You' : 'Hudson'} marked it turned in${esc(marked)}</div>
+        ${done ? `<div><b>Grade:</b> ${esc(t.confirmedGrade || '—')}${t.confirmedNote ? ' · ' + esc(t.confirmedNote) : ''}</div><div class="hint">Gradebook said ${esc(t.conflict)}. Confirmed ${esc(nice(String(t.confirmedAt).slice(0, 10)))}</div>`
+          : `<div class="says">Gradebook says: ${esc(t.conflict)}</div>`}
+        <button class="act">${isStudent() ? 'Find solution' : done ? 'Edit grade' : 'Confirm grade'}</button>`;
+      el.querySelector('button').onclick = () => (isStudent() ? solutionSheet(t) : confirmSheet(t));
+      list.appendChild(el);
+    });
+    parent.appendChild(list);
+  }
+  function solutionSheet(t) {
+    sheet(`<h3>${esc(conflictName(t))}</h3>
+      <div class="conflict"><div class="says">The grade book has marked this assignment as ${esc(t.conflict)}.</div><div>You marked it turned in${t.turnedInAt ? ' on ' + esc(nice(t.turnedInAt.slice(0, 10))) : ''}.</div></div>
+      <p>To clear this assignment, talk with Mom and Dad to find a solution. Bring what you know: where you turned it in, and whether you still have the work.</p>
+      <div class="row"><button class="act" id="close">Got it</button></div>`, p => { p.querySelector('#close').onclick = closeSheet; });
+  }
+  function confirmSheet(t) {
+    sheet(`<h3>${esc(conflictName(t))}</h3>
+      <div class="hint">Due ${esc(nice(t.due))}. Gradebook said ${esc(t.conflict)}${t.gradebookItem ? ' (' + esc(t.gradebookItem) + ')' : ''}.</div>
+      <label class="field">Grade<input id="cg" maxlength="40" value="${esc(t.confirmedGrade || '')}" placeholder="8/10, 85%, or Excused"></label>
+      <label class="field">Note<textarea id="cn" rows="3" maxlength="500" placeholder="What you agreed on">${esc(t.confirmedNote || '')}</textarea></label>
+      <div class="row"><button class="act primary" id="csave">${t.conflictState === 'resolved' ? 'Save changes' : 'Confirm grade'}</button><button class="act" id="close">Cancel</button></div>
+      <div class="hint">Confirming clears it from Hudson's Needs Attention.</div>`, p => {
+      p.querySelector('#close').onclick = closeSheet;
+      p.querySelector('#csave').onclick = () => {
+        const grade = p.querySelector('#cg').value.trim(), note = p.querySelector('#cn').value.trim();
+        if (!grade && !note) { toast('Add a grade or a note'); return; }
+        closeSheet();
+        api('confirmGrade', { id: t.id, grade, note }).then(() => toast('Grade confirmed'), () => {});
+      };
+    });
+  }
+
   function renderToday(v) {
     const grid = document.createElement('div'); grid.className = 'grid';
     const left = document.createElement('div'); left.className = 'block';
     const right = document.createElement('div'); right.className = 'block';
     grid.append(left, right); v.appendChild(grid);
     const tasks = S.tasks;
+    const conflicts = openConflicts();
+    if (conflicts.length) conflictList(left, conflicts, 'Needs attention');
     const sugg = tasks.filter(t => t.status === 'suggested');
     if (sugg.length) section(left, 'Suggested by a parent', sugg, { action: true });
     const fix = tasks.filter(t => t.fixit && ['in', 'graded'].indexOf(t.status) < 0);
@@ -679,18 +725,22 @@
       row.querySelector('#reset').onclick = () => api('reset').then(() => { view = 'today'; render(); toast('Your fix-it list is on Today.'); });
       row.querySelector('#absent').onclick = () => api('absent', { date: S.today }).then(() => toast('Added a catch-up item for each class.'));
     }
+    const conflicts = openConflicts();
+    if (conflicts.length) conflictList(v, conflicts, 'Needs attention');
     section(v, 'Missing (past due, not turned in)', S.tasks.filter(missing).sort((a, b) => a.due < b.due ? -1 : 1), { action: true }, 'Nothing missing. Great job.');
     section(v, 'Done, not turned in', S.tasks.filter(t => t.status === 'done' && t.type === 'assignment'), { action: true }, 'All caught up.');
     const note = document.createElement('p'); note.className = 'hint';
-    note.textContent = 'Algebra takes late work for partial credit. Chemistry takes it until the end of the unit. Friday: compare this with Veracross and fix anything showing 0 or "Not Turned In".';
+    note.textContent = 'Algebra takes late work for partial credit. Chemistry takes it until the end of the unit. Check Veracross for anything showing 0 or "Not Turned In".';
     v.appendChild(note);
   }
 
   function renderParent(v) {
     const h = document.createElement('h2'); h.textContent = 'Needs attention'; v.appendChild(h);
-    const flags = S.flags || [];
+    const flags = (S.flags || []).filter(f => f.kind !== 'Gradebook disagrees');
+    const conflicts = openConflicts();
+    if (conflicts.length) conflictList(v, conflicts);
     const fl = document.createElement('div'); fl.className = 'list';
-    fl.innerHTML = flags.length ? flags.map(f => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span></div>`).join('') : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>';
+    fl.innerHTML = flags.length ? flags.map(f => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span></div>`).join('') : (conflicts.length ? '' : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>');
     v.appendChild(fl);
     const wk = mondayOf(S.today);
     const thisWeek = S.tasks.filter(t => t.type === 'assignment' && t.due >= wk && t.due < addDays(wk, 7));
@@ -703,9 +753,27 @@
     v.appendChild(stat);
     const h3 = document.createElement('h2'); h3.textContent = 'Paste grades'; v.appendChild(h3);
     const box = document.createElement('div'); box.className = 'block';
-    box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the Veracross grade detail for the Friday sweep"></textarea><div class="row"><button class="act primary" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
+    box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the whole Veracross Grade Detail page, any day. One class or all of them."></textarea><div class="row"><button class="act primary" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
     v.appendChild(box);
-    box.querySelector('#savegrades').onclick = () => { const t = box.querySelector('#grades').value.trim(); if (t) api('grades', { text: t }).then(() => toast('Grades saved')); };
+    box.querySelector('#savegrades').onclick = () => {
+      const t = box.querySelector('#grades').value.trim();
+      if (!t) return;
+      toast('Checking grades…');
+      api('grades', { text: t }).then(d => {
+        const r = d.gradeResult || {};
+        toast(!r.read ? 'No assignments found. Paste the whole Grade Detail page.' : `Read ${r.read} assignments in ${(r.classes || []).length} classes. ${r.newConflicts ? r.newConflicts + ' new to check.' : 'No new conflicts.'}`);
+      }, () => {});
+    };
+    const gc = S.gradeCheck;
+    if (gc) {
+      const info = document.createElement('div'); info.className = 'block';
+      const probs = gc.problems || [];
+      info.innerHTML = `<div class="hint">Last check ${esc(nice(String(gc.checkedAt).slice(0, 10)))}: read ${esc(gc.read)} assignments in ${esc((gc.classes || []).length)} classes.</div>` +
+        (probs.length ? `<details><summary class="hint">Other gradebook problems he hasn't marked turned in (${probs.length})</summary>${probs.map(x => `<div class="gprob"><b>${esc((CLASSES[x.cls] || {}).name || '')}</b> ${esc(x.name)} · ${esc(nice(x.date))} · <span class="tag warn">${esc(x.says)}</span>${x.inPlanner ? '' : ' <span class="hint">not in planner</span>'}</div>`).join('')}</details>` : '');
+      v.appendChild(info);
+    }
+    const resolved = S.tasks.filter(t => t.conflictState === 'resolved').sort((a, b) => a.confirmedAt < b.confirmedAt ? 1 : -1);
+    if (resolved.length) conflictList(v, resolved, 'Confirmed grades');
     const hin = document.createElement('h2'); hin.textContent = 'Recently turned in'; v.appendChild(hin);
     const since = addDays(S.today, -14);
     const turned = S.tasks.filter(t => t.turnedInAt && t.turnedInAt.slice(0, 10) >= since && isWork(t))
@@ -716,6 +784,7 @@
       const tags = [];
       if (t.due && doneDay > t.due) tags.push('<span class="tag warn">Done late</span>');
       if (t.due && inDay > t.due) tags.push('<span class="tag warn">Turned in late</span>');
+      if (t.conflictState === 'open') tags.push('<span class="tag bad">Gradebook disagrees</span>');
       if (!tags.length) tags.push('<span class="tag good">On time</span>');
       return `<div class="task" style="--c:${cls(t).color}"><div class="main"><div class="t">${esc(cls(t).name ? cls(t).name + ': ' : '')}${esc(t.title)}</div><div class="meta"><span>Due ${esc(nice(t.due))}</span><span>Done ${esc(nice(doneDay))}</span><span>Turned in ${esc(nice(inDay))}</span>${tags.join('')}</div></div></div>`;
     }).join('') || '<div class="empty">Nothing turned in over the last two weeks.</div>';
