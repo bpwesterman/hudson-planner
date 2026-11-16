@@ -358,6 +358,28 @@ function recurring(tasks, ctx) {
 
 /* ------------------------------------------------------------------ sync */
 
+/** Tasks a parent deleted stay deleted: their source ids are remembered so a sync doesn't bring them back. */
+function deletedSources() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('DELETED') || '[]'); } catch (e) { return []; }
+}
+function saveDeletedSources(list) {
+  // Keep the newest 300 so the property stays under its size limit.
+  PropertiesService.getScriptProperties().setProperty('DELETED', JSON.stringify(list.slice(-300)));
+}
+/** Calendar tasks are matched by event id, since their source id also holds the due date. */
+function tombstone(sourceId) {
+  const m = String(sourceId).match(/^(feed\|[^|]+\|)/);
+  return m ? m[1] : String(sourceId);
+}
+function dropDeleted(tasks) {
+  const dead = deletedSources();
+  if (!dead.length) return;
+  for (let i = tasks.length - 1; i >= 0; i--) {
+    const sid = String(tasks[i].sourceId || '');
+    if (sid && dead.some(d => sid === d || (d.slice(-1) === '|' && sid.indexOf(d) === 0))) tasks.splice(i, 1);
+  }
+}
+
 function syncAll() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -401,6 +423,7 @@ function syncAll() {
     for (let i = tasks.length - 1; i >= 0; i--) {
       if (String(tasks[i].sourceId).indexOf('sketch|') === 0) tasks.splice(i, 1);
     }
+    dropDeleted(tasks);
     tasks.forEach(t => ensureExtras(t, tasks, ctx, teachers));
     // Keep visit titles in step with the teacher names in Config and the quiz or test title.
     tasks.forEach(t => {
@@ -414,6 +437,7 @@ function syncAll() {
       if (t.visitSlot) syncVisitEvent(t);
     });
     recurring(tasks, ctx);
+    dropDeleted(tasks);
     writeTasks(tasks);
     props.setProperty('INITIALIZED', '1');
     props.setProperty('LAST_SYNC', nowStamp());
@@ -531,9 +555,13 @@ function pointsTotal() {
 
 /** Days in a row (most recent first) where everything planned for that day got done. */
 function streak(tasks, today) {
+  // A parent can set the streak; days after that keep counting on top of the number they set.
+  let set = null;
+  try { set = JSON.parse(PropertiesService.getScriptProperties().getProperty('STREAK_SET') || 'null'); } catch (e) { set = null; }
   let n = 0;
   for (let i = 1; i <= 60; i++) {
     const d = addDays(today, -i);
+    if (set && d < set.on) return n + Number(set.value || 0);
     const planned = tasks.filter(t => t.doDay === d && t.type !== 'visit');
     if (!planned.length) continue;
     const ok = planned.every(t => (t.doneAt && t.doneAt.slice(0, 10) <= d) || (t.turnedInAt && t.turnedInAt.slice(0, 10) <= d));
@@ -710,6 +738,30 @@ function handle(req, who) {
         const already = readRows('Points').some(r => r.date === today && r.reason === 'Study: ' + req.item);
         if (!already) { appendRow('Points', { date: today, points: 1, reason: 'Study: ' + req.item, taskId: '' }); gained = 1; }
       }
+    } else if (req.action === 'delete') {
+      if (who.role !== 'parent') throw new Error('Only a parent can delete');
+      const t = byId[String(req.id)];
+      if (!t) throw new Error('Task not found');
+      // A quiz or test takes its teacher visit and study sessions with it.
+      const gone = tasks.filter(x => x === t || x.visitFor === t.id || String(x.sourceId).indexOf('study|' + t.id + '|') === 0);
+      const dead = deletedSources();
+      gone.forEach(x => {
+        if (x.type === 'visit' && x.visitSlot) { x.visitSlot = ''; syncVisitEvent(x); }
+        if (x.sourceId) dead.push(tombstone(x.sourceId));
+        tasks.splice(tasks.indexOf(x), 1);
+      });
+      saveDeletedSources(dead);
+    } else if (req.action === 'bonus') {
+      if (who.role !== 'parent') throw new Error('Not allowed');
+      const pts = Math.round(Number(req.points));
+      if (!pts || Math.abs(pts) > 1000) throw new Error('Points must be a whole number between -1000 and 1000');
+      const why = String(req.reason || '').trim().slice(0, 100);
+      appendRow('Points', { date: today, points: pts, reason: (pts > 0 ? 'Bonus from parent' : 'Adjusted by parent') + (why ? ': ' + why : ''), taskId: '' });
+    } else if (req.action === 'setStreak') {
+      if (who.role !== 'parent') throw new Error('Not allowed');
+      const n = Math.round(Number(req.streak));
+      if (!(n >= 0 && n <= 1000)) throw new Error('Streak must be a whole number from 0 to 1000');
+      PropertiesService.getScriptProperties().setProperty('STREAK_SET', JSON.stringify({ value: n, on: today }));
     } else if (req.action === 'grades') {
       if (who.role !== 'parent') throw new Error('Not allowed');
       appendRow('Grades', { pastedAt: nowStamp(), by: who.email, text: String(req.text || '').slice(0, 45000) });

@@ -296,6 +296,21 @@
     });
   }
 
+  // Parents only: delete a task for good. Two taps, so a stray tap can't remove anything.
+  function delHtml(t) {
+    if (S.role !== 'parent') return '';
+    const linked = (t.type === 'quiz' || t.type === 'test') ? ' Its teacher visit and study sessions go too.' : '';
+    return `<div class="row"><button class="act danger" id="f-del">Delete for good</button></div><div class="hint">Removes it for everyone. It won't come back from the calendar.${linked}</div>`;
+  }
+  function wireDelete(p, t) {
+    const b = p.querySelector('#f-del');
+    if (!b) return;
+    b.onclick = () => {
+      if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to delete'; return; }
+      closeSheet();
+      api('delete', { id: t.id }).then(() => toast('Deleted'), e => toast('Could not delete: ' + e.message));
+    };
+  }
   function detailSheet(t) {
     const ro = !isStudent() || t.status === 'suggested';
     const c = cls(t);
@@ -311,8 +326,10 @@
       <label class="field"><span><input type="checkbox" id="f-paper" ${t.paper ? 'checked' : ''} ${ro ? 'disabled' : ''}> Paper to hand in</span></label>
       <label class="field">Note<textarea id="f-note" rows="2" ${ro ? 'disabled' : ''}>${esc(t.note)}</textarea></label>
       ${t.minutes ? `<div class="hint">Took ${t.minutes >= 120 ? '2+ hr' : t.minutes + ' min'}</div>` : ''}
-      <div class="row">${ro ? '' : '<button class="act primary" id="f-save">Save</button>'}<button class="act" id="f-close">Close</button></div>`, p => {
+      <div class="row">${ro ? '' : '<button class="act primary" id="f-save">Save</button>'}<button class="act" id="f-close">Close</button></div>
+      ${delHtml(t)}`, p => {
       p.querySelector('#f-close').onclick = closeSheet;
+      wireDelete(p, t);
       if (ro) return;
       p.querySelectorAll('#segstat button').forEach(b => b.onclick = () => {
         closeSheet();
@@ -407,8 +424,10 @@
       ${showPicker ? `<h4 class="sub">Or pick a day</h4>${pickerHtml(days, pickSel)}<div id="dayinfo"></div>` : ''}
       <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
       <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" target="_blank" rel="noopener">Open in email</a>' : ''}</div>
-      <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>`, p => {
+      <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>
+      ${delHtml(t)}`, p => {
       p.querySelector('#close').onclick = closeSheet;
+      wireDelete(p, t);
       if (!isStudent()) return;
       const setMail = () => {
         const txt = p.querySelector('#draft').textContent;
@@ -701,6 +720,26 @@
       return `<div class="task" style="--c:${cls(t).color}"><div class="main"><div class="t">${esc(cls(t).name ? cls(t).name + ': ' : '')}${esc(t.title)}</div><div class="meta"><span>Due ${esc(nice(t.due))}</span><span>Done ${esc(nice(doneDay))}</span><span>Turned in ${esc(nice(inDay))}</span>${tags.join('')}</div></div></div>`;
     }).join('') || '<div class="empty">Nothing turned in over the last two weeks.</div>';
     v.appendChild(tl);
+    const hr = document.createElement('h2'); hr.textContent = 'Reward points'; v.appendChild(hr);
+    const rw = document.createElement('div'); rw.className = 'block';
+    rw.innerHTML = `<div class="row adj"><label class="field">Points<input type="number" id="bpts" inputmode="numeric" step="1" value="10"></label><label class="field grow">Reason (optional)<input id="bwhy" maxlength="100" placeholder="Great week of turning things in"></label></div>
+      <div class="row"><button class="act primary" id="bgive">Give points</button></div><div class="hint">Use a minus number to take points back.</div>`;
+    v.appendChild(rw);
+    rw.querySelector('#bgive').onclick = () => {
+      const n = Math.round(Number(rw.querySelector('#bpts').value));
+      if (!n) { toast('Enter a number of points'); return; }
+      api('bonus', { points: n, reason: rw.querySelector('#bwhy').value }).then(() => { toast(`${n > 0 ? '+' : ''}${n} points given`); }, e => toast(e.message));
+    };
+    const hs = document.createElement('h2'); hs.textContent = 'Streak'; v.appendChild(hs);
+    const sk = document.createElement('div'); sk.className = 'block';
+    sk.innerHTML = `<div class="row adj"><label class="field">Set streak to<input type="number" id="snum" inputmode="numeric" min="0" step="1" value="${esc(S.streak || 0)}"></label></div>
+      <div class="row"><button class="act" id="sset">Set streak</button></div><div class="hint">It keeps counting from this number. A day with planned work left undone still resets it.</div>`;
+    v.appendChild(sk);
+    sk.querySelector('#sset').onclick = () => {
+      const n = Math.round(Number(sk.querySelector('#snum').value));
+      if (!(n >= 0)) { toast('Enter 0 or more'); return; }
+      api('setStreak', { streak: n }).then(() => toast(`Streak set to ${n}`), e => toast(e.message));
+    };
     const h4 = document.createElement('h2'); h4.textContent = 'Recent points'; v.appendChild(h4);
     const pts = document.createElement('div'); pts.className = 'list';
     pts.innerHTML = (S.recentPoints || []).map(r => `<div class="hint">${esc(r.date)} · +${esc(r.points)} · ${esc(r.reason)}</div>`).join('') || '<div class="empty">No points yet.</div>';
