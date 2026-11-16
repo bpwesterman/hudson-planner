@@ -322,33 +322,83 @@
   }
 
   /* ---------------- teacher visits ---------------- */
+  const SLOT_TUT = 'Tutorial 11:35', SLOT_ACT = 'Activities 12:00', SLOT_SIX = '6th period', SLOT_EMAIL = 'Before or after school (email first)';
+  const canVisit = info => !!info && (info.rb || (info.periods || '').indexOf('6') >= 0);
+  // The standard visit times on one school day; times the day's schedule doesn't have are left out.
+  function slotsForDay(d, t) {
+    const info = (S.school || {})[d];
+    const out = [];
+    if (info && info.rb) { out.push(SLOT_TUT); out.push(SLOT_ACT); }
+    if (info && (info.periods || '').indexOf('6') >= 0) out.push(SLOT_SIX);
+    if (t.cls === 'Alg') out.push(`Any time (email ${(S.teachers || {}).Alg || 'your teacher'} first)`);
+    out.push(SLOT_EMAIL);
+    return out;
+  }
   function slotOptions(t) {
     const out = [];
     const days = Object.keys(S.school || {}).filter(d => d >= S.today && d <= t.doDay).sort().reverse().slice(0, 3);
     days.forEach(d => {
       const info = S.school[d];
-      if (info.rb) { out.push([d, 'Tutorial 11:35']); out.push([d, 'Activities 12:00']); }
-      if (info.periods && info.periods.indexOf('6') >= 0) out.push([d, '6th period']);
+      if (info.rb) { out.push([d, SLOT_TUT]); out.push([d, SLOT_ACT]); }
+      if (info.periods && info.periods.indexOf('6') >= 0) out.push([d, SLOT_SIX]);
     });
     if (t.cls === 'Alg') out.push([t.doDay, `Any time (email ${(S.teachers || {}).Alg || 'your teacher'} first)`]);
-    out.push([t.doDay, 'Before or after school (email first)']);
+    out.push([t.doDay, SLOT_EMAIL]);
     return out;
+  }
+  // Days he can choose in the date picker: school days with tutorial, activities or 6th period,
+  // from today up to the day before the quiz or test (or through Friday for the weekly visit).
+  function pickableDays(t, target) {
+    const last = target ? addDays(target.due, -1) : (t.due || addDays(S.today, 6));
+    return Object.keys(S.school || {}).filter(d => d >= S.today && d <= last && canVisit(S.school[d])).sort();
+  }
+  function scheduleHtml(d) {
+    const info = (S.school || {})[d];
+    if (!info) return '<div class="hint">No school schedule found for this day.</div>';
+    const byPeriod = {};
+    Object.keys(S.periods || {}).forEach(k => { byPeriod[S.periods[k]] = k; });
+    const extra = String(info.title || '').replace(/^Day\s+\d+\s*\(\s*[A-Za-z]+\s+\d+\s*/i, '').replace(/\)\s*$/, '').trim();
+    const codeName = info.code === 'RB' ? 'Regular Bell' : info.code;
+    const periods = String(info.periods || '').split('').map(n => {
+      const k = byPeriod[n];
+      return `<li style="--c:${k && CLASSES[k] ? CLASSES[k].color : 'var(--line)'}"><b>${esc(n)}</b>${k && CLASSES[k] ? esc(CLASSES[k].name) : n === '6' ? 'Free period' : 'Period ' + esc(n)}</li>`;
+    }).join('');
+    return `<div class="sched"><div class="sched-h"><strong>${esc(nice(d))}</strong> · Day ${esc(info.day)}${codeName ? ' · ' + esc(codeName) : ''}${extra ? ' · ' + esc(extra) : ''}</div>
+      <ol class="sched-p">${periods}</ol>
+      ${info.rb ? '<div class="hint">Tutorial 11:35–12:00 · Activities 12:00–12:35</div>' : '<div class="hint">No tutorial or activities on this schedule.</div>'}</div>`;
+  }
+  function pickerHtml(days, sel) {
+    const ok = {}; days.forEach(d => { ok[d] = true; });
+    let html = '<div class="dpick" role="group" aria-label="Pick a day">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(w => `<div class="dh">${w}</div>`).join('');
+    for (let wk = mondayOf(S.today); wk <= days[days.length - 1]; wk = addDays(wk, 7)) {
+      for (let i = 0; i < 5; i++) {
+        const d = addDays(wk, i);
+        const label = `<span>${MONTHS[+d.slice(5, 7) - 1]}</span>${+d.slice(8)}`;
+        html += ok[d] ? `<button class="pday" data-d="${d}" aria-pressed="${d === sel}">${label}</button>` : `<div class="pday off" aria-hidden="true">${label}</div>`;
+      }
+    }
+    return html + '</div>';
   }
   function visitSheet(t) {
     const target = t.visitFor ? T(t.visitFor) : null;
     const teacher = (S.teachers || {})[t.cls] || 'your teacher';
     const opts = slotOptions(t);
+    const days = isStudent() ? pickableDays(t, target) : [];
+    const showPicker = target ? days.length > 1 : days.length > 0;
     const draftFor = (d, slot) => {
       const what = target ? `${target.title} on ${nice(target.due)}` : 'how I am doing in class';
       return `Hi ${teacher},\n\nCould I come see you ${/^(Tutorial|Activities|6th)/.test(slot) ? 'during ' + slot.replace(/ \d.*$/, '').toLowerCase() : 'at a time that works for you'} on ${nice(d)}? I'd like to go over ${what}.\n\nThank you,\n${S.studentName || ''}`;
     };
     let chosen = t.visitSlot || '';
+    const pickSel = days.indexOf(t.doDay) >= 0 ? t.doDay : '';
+    const slotBtn = (d, s, label) => `<button class="slot" data-d="${d}" data-s="${esc(s)}" aria-pressed="${!!chosen && chosen === s && t.doDay === d}">${esc(label)}</button>`;
     sheet(`
       <h3>${esc(t.title)}</h3>
       ${target ? `<div class="hint">${target.type === 'test' ? 'Test' : 'Quiz'} ${esc(nice(target.due))}. Bring 2–3 questions.</div>` : '<div class="hint">Pick any class. A quick check-in counts.</div>'}
-      ${isStudent() ? `<div class="slots">${opts.map(([d, s], i) => { const v = `${s} · ${short(d)}`; return `<button class="slot" data-i="${i}" aria-pressed="${chosen.indexOf(s) === 0 && t.doDay === d}">${esc(v)}</button>`; }).join('')}</div>` : ''}
+      ${isStudent() ? `${showPicker ? '<h4 class="sub">Suggested</h4>' : ''}<div class="slots">${opts.map(([d, s]) => slotBtn(d, s, `${s} · ${short(d)}`)).join('')}</div>` : ''}
+      ${showPicker ? `<h4 class="sub">Or pick a day</h4>${pickerHtml(days, pickSel)}<div id="dayinfo"></div>` : ''}
       <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
-      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#">Open in email</a>' : ''}</div>
+      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" target="_blank" rel="noopener">Open in email</a>' : ''}</div>
       <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>`, p => {
       p.querySelector('#close').onclick = closeSheet;
       if (!isStudent()) return;
@@ -357,13 +407,26 @@
         p.querySelector('#mail').href = `mailto:?subject=${encodeURIComponent('Could I come see you?')}&body=${encodeURIComponent(txt)}`;
       };
       setMail();
-      p.querySelectorAll('.slot').forEach(b => b.onclick = () => {
-        const [d, s] = opts[+b.dataset.i];
-        p.querySelectorAll('.slot').forEach(o => o.setAttribute('aria-pressed', o === b));
+      const wireSlots = () => p.querySelectorAll('.slot').forEach(b => b.onclick = () => {
+        const d = b.dataset.d, s = b.dataset.s;
+        chosen = s;
+        p.querySelectorAll('.slot').forEach(o => o.setAttribute('aria-pressed', o.dataset.d === d && o.dataset.s === s));
         p.querySelector('#draft').textContent = draftFor(d, s);
         setMail();
         saveTask(t, { visitSlot: s, doDay: d }, `Visit set for ${short(d)}`);
       });
+      const showDay = d => {
+        const box = p.querySelector('#dayinfo');
+        if (!box) return;
+        box.innerHTML = d ? `${scheduleHtml(d)}<div class="slots">${slotsForDay(d, t).map(s => slotBtn(d, s, s)).join('')}</div>` : '';
+        wireSlots();
+      };
+      p.querySelectorAll('.pday[data-d]').forEach(b => b.onclick = () => {
+        p.querySelectorAll('.pday[data-d]').forEach(o => o.setAttribute('aria-pressed', o === b));
+        showDay(b.dataset.d);
+      });
+      showDay(pickSel);
+      wireSlots();
       p.querySelector('#copy').onclick = () => {
         const txt = p.querySelector('#draft').textContent;
         navigator.clipboard.writeText(txt).then(() => toast('Copied. Paste it into your school email.'), () => toast('Select the text and copy it.'));

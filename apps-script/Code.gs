@@ -451,10 +451,12 @@ function addReminder(cal, date, hhmm, title, desc) {
 const SLOT_TIMES = { 'Tutorial': ['11:35', '12:00'], 'Activities': ['12:00', '12:35'] };
 
 /** Puts a booked teacher visit on the plan calendar. */
-function syncVisitEvent(t) {
+function syncVisitEvent(t, oldDay) {
   const cal = CalendarApp.getCalendarsByName(CONFIG.PLAN_CALENDAR)[0];
   if (!cal) return;
-  const from = toDate(addDays(t.doDay, -30)), to = toDate(addDays(t.doDay, 30));
+  // Search around both the old and the new day, so a visit moved to another day loses its old event.
+  const days = [t.doDay, oldDay || t.doDay].sort();
+  const from = toDate(addDays(days[0], -30)), to = toDate(addDays(days[1], 30));
   cal.getEvents(from, to).forEach(ev => { if (ev.getTag('task') === t.id) ev.deleteEvent(); });
   if (!t.visitSlot || t.status === 'done') return;
   const key = Object.keys(SLOT_TIMES).find(k => t.visitSlot.indexOf(k) === 0);
@@ -621,7 +623,7 @@ function handle(req, who) {
       }
       t.updatedAt = nowStamp();
       gained = applyPoints(before, t);
-      if (t.type === 'visit' && (t.visitSlot !== before.visitSlot || t.status !== before.status)) syncVisitEvent(t);
+      if (t.type === 'visit' && (t.visitSlot !== before.visitSlot || t.doDay !== before.doDay || t.status !== before.status)) syncVisitEvent(t, before.doDay);
     } else if (req.action === 'add') {
       const ctx = context(tasks);
       const p = req.task || {};
