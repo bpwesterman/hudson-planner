@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hudson's Planner</title>
+<meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Planner">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="signin" class="signin" hidden>
+  <div class="signin-card">
+    <h1>Hudson's Planner</h1>
+    <p>Sign in with your Google account.</p>
+    <div id="gbutton"></div>
+    <p id="signin-msg" class="hint"></p>
+  </div>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <header class="top">
+    <div>
+      <h1 id="hello">Hey there</h1>
+      <div class="date" id="dayline"></div>
+    </div>
+    <div class="points">
+      <span class="pill" title="Days in a row with everything you planned finished"><b id="streak">0</b> day streak</span>
+      <span class="pill" title="Points toward your reward"><b id="pts">0</b> pts</span>
+    </div>
+  </header>
+
+  <form class="quick" id="quickform" autocomplete="off">
+    <input id="quickadd" enterkeyhint="done" placeholder='Add: "Hist reading p.212 due Thu"' aria-label="Quick add an assignment">
+    <button class="act primary" type="submit">Add</button>
+  </form>
+  <div class="hint" id="quickpreview"></div>
+
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="view"></main>
+  <footer class="foot hint" id="foot"></footer>
+</div>
+
+<div id="toast" class="toast" hidden role="status"><span id="toastmsg"></span><button id="undo" hidden>Undo</button></div>
+<div id="sheet" class="sheet" hidden><div class="panel" id="sheetpanel" role="dialog" aria-modal="true"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

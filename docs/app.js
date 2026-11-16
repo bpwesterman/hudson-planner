@@ -1,0 +1,602 @@
+/* Hudson's Planner front end. Talks to the Apps Script back office. */
+(() => {
+  'use strict';
+
+  const CFG = window.HP_CONFIG || {};
+  const CLASSES = {
+    Chem: { name: 'Chemistry', color: 'var(--chem)', turnIn: 'In person', late: 'Late work accepted until the end of the unit.' },
+    Photo: { name: 'Photography', color: 'var(--photo)', turnIn: 'Sketchbook in person; edited photos to the shared drive', late: '' },
+    Alg: { name: 'Algebra 2', color: 'var(--alg)', turnIn: 'IXL online; worksheets in person', late: 'Late work accepted for partial credit.' },
+    Hist: { name: 'History', color: 'var(--hist)', turnIn: 'In person', late: '' },
+    Span: { name: 'Spanish 3', color: 'var(--span)', turnIn: 'Conjuguemos online; other work in person', late: '' },
+    Eng: { name: 'English 10', color: 'var(--eng)', turnIn: 'Paper in person; Membean online; essays on Google Classroom or Turnitin', late: '' },
+  };
+  const ALIASES = {
+    chem: 'Chem', chemistry: 'Chem', photo: 'Photo', photography: 'Photo', alg: 'Alg', algebra: 'Alg', math: 'Alg',
+    hist: 'Hist', history: 'Hist', span: 'Span', spanish: 'Span', esp: 'Span', eng: 'Eng', english: 'Eng',
+  };
+  const STATUS = [['todo', 'Not started'], ['doing', 'In progress'], ['done', 'Done'], ['in', 'Turned in']];
+  const OPEN = ['todo', 'doing'];
+  const WORK_TYPES = ['assignment', 'study', 'routine', 'sweep'];
+  const SLIP_REASONS = ['Ran out of time', 'Forgot', "Didn't understand it", 'Basketball or plans', 'Felt stuck', 'Other'];
+  const MINUTES = [['15 min', 15], ['30 min', 30], ['1 hr', 60], ['2+ hr', 120]];
+  const STUDY = ['15 min Spanish', '15 min History or Membean', '15 min for the next test'];
+  const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  let S = null;            // server state
+  let token = null;
+  let view = 'today';
+  let weekOffset = 0;
+  let classTab = 'Chem';
+  let undoFn = null;
+  let askedSlip = {};
+
+  /* ---------------- dates ---------------- */
+  const addDays = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const wd = s => new Date(s + 'T12:00:00Z').getUTCDay();
+  const nice = s => s ? `${WD[wd(s)]} ${MONTHS[+s.slice(5, 7) - 1]} ${+s.slice(8, 10)}` : '';
+  const short = s => {
+    if (!S) return nice(s);
+    if (s === S.today) return 'today';
+    if (s === addDays(S.today, 1)) return 'tomorrow';
+    if (s === addDays(S.today, -1)) return 'yesterday';
+    const diff = (new Date(s) - new Date(S.today)) / 864e5;
+    return diff > 0 && diff < 7 ? WD[wd(s)] : nice(s);
+  };
+  const mondayOf = s => addDays(s, -((wd(s) + 6) % 7));
+
+  /* ---------------- auth ---------------- */
+  function loadToken() {
+    try {
+      const t = JSON.parse(localStorage.getItem('hp_token') || 'null');
+      if (t && t.exp > Date.now() / 1000 + 60) return t.jwt;
+    } catch (e) { /* storage blocked */ }
+    return null;
+  }
+  function saveToken(jwt) {
+    try {
+      const p = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      localStorage.setItem('hp_token', JSON.stringify({ jwt, exp: p.exp }));
+    } catch (e) { /* ignore */ }
+  }
+  function showSignin(msg) {
+    $('#app').hidden = true;
+    $('#signin').hidden = false;
+    $('#signin-msg').textContent = msg || '';
+    const tryInit = () => {
+      if (!window.google || !google.accounts) return setTimeout(tryInit, 200);
+      google.accounts.id.initialize({
+        client_id: CFG.CLIENT_ID, auto_select: true, itp_support: true,
+        callback: r => { token = r.credential; saveToken(token); start(); },
+      });
+      google.accounts.id.renderButton($('#gbutton'), { theme: 'filled_blue', size: 'large', shape: 'pill', text: 'signin_with' });
+      google.accounts.id.prompt();
+    };
+    tryInit();
+  }
+
+  /* ---------------- api ---------------- */
+  async function api(action, body) {
+    if (!token) token = loadToken();
+    if (!token) { showSignin(); throw new Error('signin'); }
+    const res = await fetch(CFG.API_URL, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ idToken: token, action }, body || {})),
+    });
+    const data = await res.json();
+    if (data.error === 'auth') {
+      token = null;
+      try { localStorage.removeItem('hp_token'); } catch (e) { /* ignore */ }
+      showSignin('Please sign in again.');
+      throw new Error('auth');
+    }
+    if (data.error) { toast(data.error); throw new Error(data.error); }
+    S = data;
+    try { localStorage.setItem('hp_cache', JSON.stringify(data)); } catch (e) { /* ignore */ }
+    if (data.gained) { bumpPoints(data.gained); }
+    render();
+    return data;
+  }
+
+  async function start() {
+    $('#signin').hidden = true;
+    $('#app').hidden = false;
+    try {
+      const cached = JSON.parse(localStorage.getItem('hp_cache') || 'null');
+      if (cached && !S) { S = cached; render(); }
+    } catch (e) { /* ignore */ }
+    try { await api('load'); } catch (e) { return; }
+    if (S.role === 'parent' && view === 'today') { view = 'parent'; render(); }
+    checkSlips();
+  }
+
+  /* ---------------- helpers ---------------- */
+  const T = id => S.tasks.find(t => String(t.id) === String(id));
+  const isStudent = () => S && S.role === 'student';
+  const cls = t => CLASSES[t.cls] || { name: '', color: 'var(--muted)' };
+  const isWork = t => WORK_TYPES.indexOf(t.type) >= 0;
+  const missing = t => t.type === 'assignment' && t.due < S.today && ['in', 'graded', 'suggested'].indexOf(t.status) < 0;
+
+  function saveTask(t, patch, msg) {
+    const before = Object.assign({}, t);
+    Object.assign(t, patch);
+    render();
+    undoFn = () => api('save', { task: Object.assign({ id: t.id }, pick(before, Object.keys(patch))) });
+    if (msg) toast(msg, true);
+    return api('save', { task: Object.assign({ id: t.id }, patch) }).catch(() => { Object.assign(t, before); render(); });
+  }
+  const pick = (o, keys) => keys.reduce((a, k) => (a[k] = o[k], a), {});
+
+  function toast(m, withUndo) {
+    $('#toastmsg').textContent = m;
+    $('#undo').hidden = !withUndo;
+    $('#toast').hidden = false;
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => { $('#toast').hidden = true; }, 4500);
+  }
+  $('#undo').onclick = () => { if (undoFn) undoFn(); undoFn = null; $('#toast').hidden = true; };
+
+  function bumpPoints(n) {
+    const e = $('#pts');
+    e.parentElement.classList.remove('pop'); void e.offsetWidth; e.parentElement.classList.add('pop');
+    if (n >= 10 && window.confetti && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      confetti({ particleCount: 70, spread: 70, origin: { y: 0.8 } });
+    }
+    toast(`+${n} points`);
+  }
+
+  function sheet(html, onReady) {
+    $('#sheetpanel').innerHTML = html;
+    $('#sheet').hidden = false;
+    if (onReady) onReady($('#sheetpanel'));
+  }
+  function closeSheet() { $('#sheet').hidden = true; }
+  $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+
+  /* ---------------- quick add ---------------- */
+  function parseQuick(text) {
+    const words = text.trim().split(/\s+/);
+    let c = ALIASES[(words[0] || '').toLowerCase()] || '';
+    let rest = c ? words.slice(1).join(' ') : text.trim();
+    let due = null;
+    const m = rest.match(/\b(?:due\s+)?(today|tomorrow|tmrw|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day|nesday|sday|urday)?\b/i);
+    const md = rest.match(/\b(?:due\s+)?(\d{1,2})\/(\d{1,2})\b/);
+    if (md) {
+      const y = +S.today.slice(0, 4);
+      due = `${y}-${String(md[1]).padStart(2, '0')}-${String(md[2]).padStart(2, '0')}`;
+      if (due < addDays(S.today, -60)) due = `${y + 1}${due.slice(4)}`;
+      rest = rest.replace(md[0], '');
+    } else if (m) {
+      const k = m[1].toLowerCase();
+      if (k === 'today') due = S.today;
+      else if (k === 'tomorrow' || k === 'tmrw') due = addDays(S.today, 1);
+      else {
+        const idx = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(k.slice(0, 3));
+        let d = addDays(S.today, 1);
+        while (wd(d) !== idx) d = addDays(d, 1);
+        due = d;
+      }
+      rest = rest.replace(m[0], '');
+    }
+    rest = rest.replace(/\bdue\b/i, '').replace(/\s{2,}/g, ' ').trim();
+    const paper = /\b(worksheet|paper|handout|sketchbook|packet)\b/i.test(rest);
+    return { cls: c, title: rest || text, due: due || addDays(S.today, 1), paper, guessed: !due };
+  }
+  $('#quickadd').addEventListener('input', () => {
+    const v = $('#quickadd').value.trim();
+    if (!v || !S) { $('#quickpreview').textContent = ''; return; }
+    const p = parseQuick(v);
+    $('#quickpreview').textContent = `${p.cls ? CLASSES[p.cls].name : 'No class yet'} · "${p.title}" · due ${short(p.due)}${p.guessed ? ' (guess)' : ''}`;
+  });
+  $('#quickform').addEventListener('submit', e => {
+    e.preventDefault();
+    const v = $('#quickadd').value.trim();
+    if (!v) return;
+    const p = parseQuick(v);
+    $('#quickadd').value = ''; $('#quickpreview').textContent = '';
+    api('add', { task: p }).then(() => toast(S.role === 'parent' ? 'Suggested. It shows up for approval.' : `Added to ${p.cls ? CLASSES[p.cls].name : 'your list'}`));
+  });
+
+  /* ---------------- task card ---------------- */
+  function taskEl(t, opts) {
+    opts = opts || {};
+    const d = document.createElement('div');
+    const c = cls(t);
+    d.className = 'task' + (t.fixit ? ' fix' : '') + (t.status === 'suggested' ? ' suggested' : '') + (isStudent() ? '' : ' ro');
+    d.dataset.id = t.id;
+    d.style.setProperty('--c', c.color);
+    const tags = [];
+    if (c.name) tags.push(`<span class="tag">${esc(c.name)}</span>`);
+    if (t.type === 'quiz' || t.type === 'test') tags.push(`<span class="tag warn">${t.type === 'test' ? 'Test' : 'Quiz'} ${esc(short(t.due))}</span>`);
+    else if (t.type !== 'visit') tags.push(`<span>${missing(t) ? 'Was due' : 'Due'} ${esc(short(t.due))}</span>`);
+    if (t.type === 'visit') tags.push(`<span>${t.visitSlot ? esc(t.visitSlot) : 'Pick a slot'}</span>`);
+    if (opts.showDo && t.doDay && t.type !== 'visit') tags.push(`<span>Plan: ${esc(short(t.doDay))}</span>`);
+    if (isWork(t) && t.type === 'assignment' && OPEN.indexOf(t.status) >= 0 && t.doDay === t.due && t.due >= S.today) tags.push('<span class="tag warn">Planned on due day</span>');
+    if (t.paper) tags.push('<span class="tag">Paper</span>');
+    if (t.status === 'done' && t.type === 'assignment') tags.push('<span class="tag warn">Not turned in</span>');
+    if (t.status === 'in') tags.push('<span class="tag good">Turned in</span>');
+    if (t.fixit) tags.push('<span class="tag">Fix-it</span>');
+    if (t.source === 'parent') tags.push('<span class="tag">From parent</span>');
+    d.innerHTML = `${opts.drag && isStudent() ? '<span class="grip" aria-hidden="true">⋮⋮</span>' : ''}<div class="main"><div class="t">${esc(t.title)}</div><div class="meta">${tags.join('')}</div></div>`;
+    if (opts.action && isStudent()) {
+      let label = null, fn = null, primary = false;
+      if (t.status === 'suggested') { label = 'Accept'; primary = true; fn = () => api('accept', { id: t.id, accept: true }); }
+      else if (t.type === 'visit' && t.status !== 'done') { label = 'I went'; fn = () => saveTask(t, { status: 'done' }, 'Visit logged'); }
+      else if (t.status === 'done' && t.type === 'assignment') { label = 'I turned it in'; primary = true; fn = () => saveTask(t, { status: 'in' }); }
+      else if (OPEN.indexOf(t.status) >= 0) { label = 'Done'; fn = () => markDone(t); }
+      if (label) {
+        const b = document.createElement('button');
+        b.className = 'act' + (primary ? ' primary' : '');
+        b.textContent = label;
+        b.onclick = e => { e.stopPropagation(); fn(); };
+        d.appendChild(b);
+      }
+      if (t.status === 'suggested') {
+        const no = document.createElement('button');
+        no.className = 'act'; no.textContent = 'No thanks';
+        no.onclick = e => { e.stopPropagation(); api('accept', { id: t.id, accept: false }); };
+        d.appendChild(no);
+      }
+    }
+    d.querySelector('.main').onclick = () => (t.type === 'visit' ? visitSheet(t) : detailSheet(t));
+    return d;
+  }
+
+  function markDone(t) {
+    const patch = { status: 'done' };
+    if (t.type !== 'assignment') patch.status = 'done';
+    saveTask(t, patch, 'Marked done');
+    if (t.type === 'visit') return;
+    sheet(`<h3>Nice. How long did it take?</h3><div class="picks">${MINUTES.map(([l, m]) => `<button data-m="${m}">${l}</button>`).join('')}</div><button class="act" data-skip>Skip</button>`, p => {
+      p.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { closeSheet(); saveTask(t, { minutes: +b.dataset.m }); });
+      p.querySelector('[data-skip]').onclick = closeSheet;
+    });
+  }
+
+  function detailSheet(t) {
+    const ro = !isStudent() || t.status === 'suggested';
+    const c = cls(t);
+    sheet(`
+      <h3>${esc(t.title)}</h3>
+      <div class="hint">${esc(c.name)}${c.turnIn ? ' · Turn in: ' + esc(c.turnIn) : ''}${c.late ? ' · ' + esc(c.late) : ''}</div>
+      ${ro ? '' : `<div class="seg" id="segstat">${STATUS.map(([k, l]) => `<button data-s="${k}" aria-pressed="${t.status === k}">${l}</button>`).join('')}</div>`}
+      <div class="row">
+        <label class="field">Due<input type="date" id="f-due" value="${esc(t.due)}" ${ro ? 'disabled' : ''}></label>
+        <label class="field">Plan to do it<input type="date" id="f-do" value="${esc(t.doDay)}" ${ro ? 'disabled' : ''}></label>
+      </div>
+      <label class="field">Class<select id="f-cls" ${ro ? 'disabled' : ''}><option value="">None</option>${Object.keys(CLASSES).map(k => `<option value="${k}" ${t.cls === k ? 'selected' : ''}>${CLASSES[k].name}</option>`).join('')}</select></label>
+      <label class="field"><span><input type="checkbox" id="f-paper" ${t.paper ? 'checked' : ''} ${ro ? 'disabled' : ''}> Paper to hand in</span></label>
+      <label class="field">Note<textarea id="f-note" rows="2" ${ro ? 'disabled' : ''}>${esc(t.note)}</textarea></label>
+      ${t.minutes ? `<div class="hint">Took ${t.minutes >= 120 ? '2+ hr' : t.minutes + ' min'}</div>` : ''}
+      <div class="row">${ro ? '' : '<button class="act primary" id="f-save">Save</button>'}<button class="act" id="f-close">Close</button></div>`, p => {
+      p.querySelector('#f-close').onclick = closeSheet;
+      if (ro) return;
+      p.querySelectorAll('#segstat button').forEach(b => b.onclick = () => {
+        closeSheet();
+        if (b.dataset.s === 'done' && t.status !== 'done') markDone(t);
+        else saveTask(t, { status: b.dataset.s }, 'Status changed');
+      });
+      p.querySelector('#f-save').onclick = () => {
+        closeSheet();
+        saveTask(t, {
+          due: p.querySelector('#f-due').value, doDay: p.querySelector('#f-do').value, cls: p.querySelector('#f-cls').value,
+          paper: p.querySelector('#f-paper').checked, note: p.querySelector('#f-note').value,
+        }, 'Saved');
+      };
+    });
+  }
+
+  /* ---------------- teacher visits ---------------- */
+  function slotOptions(t) {
+    const out = [];
+    const days = Object.keys(S.school || {}).filter(d => d >= S.today && d <= t.doDay).sort().reverse().slice(0, 3);
+    days.forEach(d => {
+      const info = S.school[d];
+      if (info.rb) { out.push([d, 'Tutorial 11:35']); out.push([d, 'Activities 12:00']); }
+      if (info.periods && info.periods.indexOf('6') >= 0) out.push([d, '6th period']);
+    });
+    if (t.cls === 'Alg') out.push([t.doDay, `Any time (email ${(S.teachers || {}).Alg || 'your teacher'} first)`]);
+    out.push([t.doDay, 'Before or after school (email first)']);
+    return out;
+  }
+  function visitSheet(t) {
+    const target = t.visitFor ? T(t.visitFor) : null;
+    const teacher = (S.teachers || {})[t.cls] || 'your teacher';
+    const opts = slotOptions(t);
+    const draftFor = (d, slot) => {
+      const what = target ? `${target.title} on ${nice(target.due)}` : 'how I am doing in class';
+      return `Hi ${teacher},\n\nCould I come see you ${/^(Tutorial|Activities|6th)/.test(slot) ? 'during ' + slot.replace(/ \d.*$/, '').toLowerCase() : 'at a time that works for you'} on ${nice(d)}? I'd like to go over ${what}.\n\nThank you,\n${S.studentName || ''}`;
+    };
+    let chosen = t.visitSlot || '';
+    sheet(`
+      <h3>${esc(t.title)}</h3>
+      ${target ? `<div class="hint">${target.type === 'test' ? 'Test' : 'Quiz'} ${esc(nice(target.due))}. Bring 2–3 questions.</div>` : '<div class="hint">Pick any class. A quick check-in counts.</div>'}
+      ${isStudent() ? `<div class="slots">${opts.map(([d, s], i) => { const v = `${s} · ${short(d)}`; return `<button class="slot" data-i="${i}" aria-pressed="${chosen.indexOf(s) === 0 && t.doDay === d}">${esc(v)}</button>`; }).join('')}</div>` : ''}
+      <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
+      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#">Open in email</a>' : ''}</div>
+      <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>`, p => {
+      p.querySelector('#close').onclick = closeSheet;
+      if (!isStudent()) return;
+      const setMail = () => {
+        const txt = p.querySelector('#draft').textContent;
+        p.querySelector('#mail').href = `mailto:?subject=${encodeURIComponent('Could I come see you?')}&body=${encodeURIComponent(txt)}`;
+      };
+      setMail();
+      p.querySelectorAll('.slot').forEach(b => b.onclick = () => {
+        const [d, s] = opts[+b.dataset.i];
+        p.querySelectorAll('.slot').forEach(o => o.setAttribute('aria-pressed', o === b));
+        p.querySelector('#draft').textContent = draftFor(d, s);
+        setMail();
+        saveTask(t, { visitSlot: s, doDay: d }, `Visit set for ${short(d)}`);
+      });
+      p.querySelector('#copy').onclick = () => {
+        const txt = p.querySelector('#draft').textContent;
+        navigator.clipboard.writeText(txt).then(() => toast('Copied. Paste it into your school email.'), () => toast('Select the text and copy it.'));
+      };
+      const went = p.querySelector('#went');
+      if (went) went.onclick = () => { closeSheet(); saveTask(t, { status: 'done' }, 'Visit logged'); };
+    });
+  }
+
+  /* ---------------- slips ---------------- */
+  function checkSlips() {
+    if (!isStudent()) return;
+    const slipped = S.tasks.filter(t => isWork(t) && OPEN.indexOf(t.status) >= 0 && t.doDay && t.doDay < S.today && t.slipDate !== S.today && !askedSlip[t.id]);
+    if (!slipped.length) return;
+    const t = slipped[0];
+    askedSlip[t.id] = true;
+    sheet(`<h3>${esc(t.title)} didn't happen ${esc(short(t.doDay))}. What got in the way?</h3>
+      <div class="picks">${SLIP_REASONS.map(r => `<button data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+      <div class="hint">No big deal. Pick one and the app finds a new day.</div>`, p => {
+      p.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+        closeSheet();
+        api('slip', { id: t.id, reason: b.dataset.r }).then(() => { toast('Rescheduled'); setTimeout(checkSlips, 600); });
+      });
+    });
+  }
+
+  /* ---------------- rendering ---------------- */
+  function tabsFor() {
+    const t = [['today', 'Today'], ['week', 'Week'], ['status', 'Status'], ['classes', 'Classes'], ['tests', 'Tests & visits'], ['missing', 'Missing']];
+    if (S.role === 'parent') t.unshift(['parent', 'Parent view']);
+    return t;
+  }
+
+  function render() {
+    if (!S) return;
+    const info = (S.school || {})[S.today];
+    $('#hello').textContent = S.role === 'parent' ? 'Parent view' : `Hey ${S.studentName || 'there'}`;
+    const shortToday = (S.short || {})[S.today];
+    $('#dayline').textContent = `${nice(S.today)}${info ? ' · ' + info.title : ''}${shortToday ? ' · ' + shortToday.join(', ') : ''}`;
+    $('#streak').textContent = S.streak || 0;
+    $('#pts').textContent = S.points || 0;
+    $('#quickadd').placeholder = S.role === 'parent' ? 'Suggest a task: "Span study guide due Thu"' : 'Add: "Hist reading p.212 due Thu"';
+    $('#tabs').innerHTML = tabsFor().map(([k, l]) => `<button role="tab" data-v="${k}" aria-selected="${view === k}">${l}</button>`).join('');
+    $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => { view = b.dataset.v; render(); });
+    $('#foot').innerHTML = `Last calendar check ${esc(S.lastSync || 'not yet')} · <button class="act" id="refresh">Check calendars now</button> · <button class="act" id="signout">Sign out</button>`;
+    $('#refresh').onclick = () => { toast('Checking calendars…'); api('sync'); };
+    $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
+    const v = $('#view');
+    v.innerHTML = '';
+    ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, parent: renderParent }[view] || renderToday)(v);
+  }
+
+  function section(parent, title, items, opts, emptyText) {
+    const h = document.createElement('h2'); h.textContent = title; parent.appendChild(h);
+    const list = document.createElement('div'); list.className = 'list';
+    if (!items.length) list.innerHTML = `<div class="empty">${esc(emptyText || 'Nothing here.')}</div>`;
+    items.forEach(t => list.appendChild(taskEl(t, opts)));
+    parent.appendChild(list);
+    return list;
+  }
+
+  function renderToday(v) {
+    const grid = document.createElement('div'); grid.className = 'grid';
+    const left = document.createElement('div'); left.className = 'block';
+    const right = document.createElement('div'); right.className = 'block';
+    grid.append(left, right); v.appendChild(grid);
+    const tasks = S.tasks;
+    const sugg = tasks.filter(t => t.status === 'suggested');
+    if (sugg.length) section(left, 'Suggested by a parent', sugg, { action: true });
+    const fix = tasks.filter(t => t.fixit && ['in', 'graded'].indexOf(t.status) < 0);
+    if (fix.length) section(left, 'Fix-it list', fix, { action: true });
+    section(left, 'Pack before school', tasks.filter(t => t.paper && t.due === S.today && ['in', 'graded', 'suggested'].indexOf(t.status) < 0), { action: true }, 'No paper to hand in today.');
+    section(left, 'Done, not turned in yet', tasks.filter(t => t.status === 'done' && t.type === 'assignment' && !(t.paper && t.due === S.today)), { action: true }, 'All caught up.');
+    const plan = tasks.filter(t => isWork(t) && OPEN.indexOf(t.status) >= 0 && t.doDay && t.doDay <= S.today && !t.fixit)
+      .sort((a, b) => orderOf(a) - orderOf(b) || (a.due < b.due ? -1 : 1));
+    const list = section(left, 'Plan for today', plan, { action: true, drag: true }, 'Nothing planned today. Nice work.');
+    if (isStudent() && window.Sortable && plan.length > 1) {
+      Sortable.create(list, { animation: 150, delay: 180, delayOnTouchOnly: true, handle: '.grip', onEnd: () => {
+        const ids = [...list.querySelectorAll('.task')].map(e => e.dataset.id);
+        try { localStorage.setItem('hp_order_' + S.today, JSON.stringify(ids)); } catch (e) { /* ignore */ }
+      } });
+    }
+
+    const visits = tasks.filter(t => t.type === 'visit' && t.status !== 'done' && t.doDay <= addDays(S.today, 3)).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
+    section(right, 'Teacher visits', visits, { action: true }, 'No visits due in the next few days.');
+    const next = tasks.filter(t => (isWork(t) || t.type === 'quiz' || t.type === 'test') && OPEN.indexOf(t.status) >= 0 && t.due >= S.today).sort((a, b) => a.due < b.due ? -1 : 1)[0];
+    const h = document.createElement('h2'); h.textContent = 'Next due'; right.appendChild(h);
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = next ? `<div class="countdown">${esc(countdown(next.due))}</div><div class="hint">${esc(cls(next).name)} · ${esc(next.title)}</div>` : '<div class="hint">Nothing due soon.</div>';
+    right.appendChild(card);
+    const h2 = document.createElement('h2'); h2.textContent = 'Daily study'; right.appendChild(h2);
+    const st = document.createElement('div'); st.className = 'study';
+    STUDY.forEach((item, i) => {
+      const l = document.createElement('label');
+      l.innerHTML = `<input type="checkbox" id="study${i}" ${S.study && S.study[item] ? 'checked' : ''} ${isStudent() ? '' : 'disabled'}> ${esc(item)}`;
+      l.querySelector('input').onchange = e => { S.study[item] = e.target.checked; api('study', { item, done: e.target.checked }); };
+      st.appendChild(l);
+    });
+    right.appendChild(st);
+  }
+  function orderOf(t) {
+    try { const o = JSON.parse(localStorage.getItem('hp_order_' + S.today) || '[]'); const i = o.indexOf(String(t.id)); return i < 0 ? 999 : i; } catch (e) { return 999; }
+  }
+  function countdown(due) {
+    const ms = new Date(due + 'T08:00:00') - new Date();
+    if (ms <= 0) return 'Due today';
+    const h = Math.floor(ms / 36e5), d = Math.floor(h / 24);
+    return d ? `${d} day${d > 1 ? 's' : ''} ${h % 24} hr` : `${h} hr`;
+  }
+
+  function renderWeek(v) {
+    const mon = addDays(mondayOf(S.today), weekOffset * 7);
+    const nav = document.createElement('div'); nav.className = 'weeknav';
+    nav.innerHTML = `<button class="act" id="wprev" aria-label="Previous week">‹</button><strong>Week of ${esc(nice(mon))}</strong><button class="act" id="wnext" aria-label="Next week">›</button>`;
+    v.appendChild(nav);
+    nav.querySelector('#wprev').onclick = () => { weekOffset--; render(); };
+    nav.querySelector('#wnext').onclick = () => { weekOffset++; render(); };
+    if (isStudent()) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Each assignment starts on a suggested day. Drag it to another day (long-press on the phone). Striped days are short.'; v.appendChild(p); }
+    const board = document.createElement('div'); board.className = 'board';
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(mon, i);
+      const shortDay = (S.short || {})[d];
+      const info = (S.school || {})[d];
+      const col = document.createElement('div');
+      col.className = 'col' + (shortDay ? ' short' : '');
+      const pins = S.tasks.filter(t => ((t.type === 'quiz' || t.type === 'test') && t.due === d) || (t.type === 'visit' && t.doDay === d && t.status !== 'done'));
+      col.innerHTML = `<header><strong>${WD[wd(d)]}${d === S.today ? ' · today' : ''}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code || 'Day ' + info.day) : ''}${shortDay ? ' · short' : ''}</span></header>` +
+        pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
+      const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
+      S.tasks.filter(t => isWork(t) && t.doDay === d && ['in', 'graded', 'suggested'].indexOf(t.status) < 0).forEach(t => drop.appendChild(taskEl(t)));
+      col.appendChild(drop);
+      board.appendChild(col);
+      if (isStudent() && window.Sortable) {
+        Sortable.create(drop, { group: 'week', animation: 150, delay: 180, delayOnTouchOnly: true, onAdd: e => {
+          const t = T(e.item.dataset.id);
+          saveTask(t, { doDay: e.to.dataset.day }, `Moved to ${short(e.to.dataset.day)}`);
+        } });
+      }
+    }
+    v.appendChild(board);
+  }
+
+  function renderStatus(v) {
+    if (isStudent()) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Drag a card across when its status changes.'; v.appendChild(p); }
+    const board = document.createElement('div'); board.className = 'board';
+    const live = S.tasks.filter(t => isWork(t) && (t.due >= addDays(S.today, -14) || OPEN.indexOf(t.status) >= 0 || t.status === 'done'));
+    STATUS.forEach(([k, l]) => {
+      const items = live.filter(t => t.status === k).sort((a, b) => a.due < b.due ? -1 : 1);
+      const col = document.createElement('div'); col.className = 'col';
+      col.innerHTML = `<header><strong>${l}</strong><span>${items.length}</span></header>`;
+      const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.s = k;
+      items.forEach(t => drop.appendChild(taskEl(t)));
+      col.appendChild(drop); board.appendChild(col);
+      if (isStudent() && window.Sortable) {
+        Sortable.create(drop, { group: 'status', animation: 150, delay: 180, delayOnTouchOnly: true, onAdd: e => {
+          const t = T(e.item.dataset.id);
+          const to = e.to.dataset.s;
+          if (to === 'done' && t.status !== 'done') markDone(t); else saveTask(t, { status: to }, 'Status changed');
+        } });
+      }
+    });
+    v.appendChild(board);
+  }
+
+  function renderClasses(v) {
+    const sub = document.createElement('div'); sub.className = 'subtabs';
+    sub.innerHTML = Object.keys(CLASSES).map(k => `<button data-c="${k}" style="--c:${CLASSES[k].color}" aria-pressed="${classTab === k}">${CLASSES[k].name}</button>`).join('');
+    sub.querySelectorAll('button').forEach(b => b.onclick = () => { classTab = b.dataset.c; render(); });
+    v.appendChild(sub);
+    const c = CLASSES[classTab];
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = `<h3>${esc(c.name)}</h3><div class="hint">Teacher: ${esc((S.teachers || {})[classTab] || '')}${S.periods && S.periods[classTab] ? ' · Period ' + esc(S.periods[classTab]) : ''}</div><div>Turn in: ${esc(c.turnIn)}</div>${c.late ? `<div>${esc(c.late)}</div>` : ''}`;
+    v.appendChild(card);
+    const mine = S.tasks.filter(t => t.cls === classTab);
+    section(v, 'Missing', mine.filter(missing), { action: true }, 'Nothing missing.');
+    section(v, 'Coming up', mine.filter(t => t.due >= S.today && ['in', 'graded'].indexOf(t.status) < 0 && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
+    section(v, 'Recently turned in', mine.filter(t => t.status === 'in').sort((a, b) => a.due > b.due ? -1 : 1).slice(0, 8), {}, 'Nothing yet.');
+  }
+
+  function renderTests(v) {
+    const tests = S.tasks.filter(t => (t.type === 'quiz' || t.type === 'test') && t.due >= S.today).sort((a, b) => a.due < b.due ? -1 : 1);
+    const h = document.createElement('h2'); h.textContent = 'Quizzes and tests'; v.appendChild(h);
+    const list = document.createElement('div'); list.className = 'list';
+    if (!tests.length) list.innerHTML = '<div class="empty">None posted yet.</div>';
+    tests.forEach(t => {
+      const visit = S.tasks.find(x => x.type === 'visit' && x.visitFor === t.id);
+      const el = taskEl(t);
+      const st = document.createElement('span');
+      st.className = 'tag ' + (visit && visit.status === 'done' ? 'good' : visit && visit.visitSlot ? '' : 'warn');
+      st.textContent = !visit ? 'No visit' : visit.status === 'done' ? 'Visited' : visit.visitSlot ? 'Visit booked ' + short(visit.doDay) : 'Book visit by ' + short(visit.doDay);
+      el.querySelector('.meta').appendChild(st);
+      if (visit) el.querySelector('.main').onclick = () => visitSheet(visit);
+      list.appendChild(el);
+    });
+    v.appendChild(list);
+    section(v, 'Teacher visits', S.tasks.filter(t => t.type === 'visit' && t.status !== 'done').sort((a, b) => a.doDay < b.doDay ? -1 : 1), { action: true }, 'No visits planned.');
+    // Month grid
+    const h2 = document.createElement('h2'); h2.textContent = 'This month and next'; v.appendChild(h2);
+    [0, 1].forEach(offset => {
+      const first = new Date(S.today.slice(0, 7) + '-01T12:00:00Z');
+      first.setUTCMonth(first.getUTCMonth() + offset);
+      const f = first.toISOString().slice(0, 10);
+      const cap = document.createElement('div'); cap.className = 'hint'; cap.textContent = MONTHS[first.getUTCMonth()] + ' ' + first.getUTCFullYear(); v.appendChild(cap);
+      const grid = document.createElement('div'); grid.className = 'month';
+      grid.innerHTML = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<div class="dh">${x}</div>`).join('');
+      let d = mondayOf(f);
+      for (let i = 0; i < 42; i++, d = addDays(d, 1)) {
+        if (i === 35 && d.slice(0, 7) !== f.slice(0, 7)) break;
+        const evs = S.tasks.filter(t => t.due === d && (t.type === 'quiz' || t.type === 'test' || /project|essay|paper|exam/i.test(t.title)));
+        grid.insertAdjacentHTML('beforeend', `<div class="cell${d.slice(0, 7) !== f.slice(0, 7) ? ' out' : ''}${d === S.today ? ' today' : ''}"><span>${+d.slice(8)}</span>${evs.map(t => `<span class="ev" style="--c:${cls(t).color}" title="${esc(t.title)}">${esc(cls(t).name || t.title)}</span>`).join('')}</div>`);
+      }
+      v.appendChild(grid);
+    });
+  }
+
+  function renderMissing(v) {
+    if (isStudent()) {
+      const row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = '<button class="act" id="reset">Reset: fold overdue into one fix-it list</button><button class="act" id="absent">I was out today</button>';
+      v.appendChild(row);
+      row.querySelector('#reset').onclick = () => api('reset').then(() => { view = 'today'; render(); toast('Your fix-it list is on Today.'); });
+      row.querySelector('#absent').onclick = () => api('absent', { date: S.today }).then(() => toast('Added a catch-up item for each class.'));
+    }
+    section(v, 'Missing (past due, not turned in)', S.tasks.filter(missing).sort((a, b) => a.due < b.due ? -1 : 1), { action: true }, 'Nothing missing. Great job.');
+    section(v, 'Done, not turned in', S.tasks.filter(t => t.status === 'done' && t.type === 'assignment'), { action: true }, 'All caught up.');
+    const note = document.createElement('p'); note.className = 'hint';
+    note.textContent = 'Algebra takes late work for partial credit. Chemistry takes it until the end of the unit. Friday: compare this with Veracross and fix anything showing 0 or "Not Turned In".';
+    v.appendChild(note);
+  }
+
+  function renderParent(v) {
+    const h = document.createElement('h2'); h.textContent = 'Needs attention'; v.appendChild(h);
+    const flags = S.flags || [];
+    const fl = document.createElement('div'); fl.className = 'list';
+    fl.innerHTML = flags.length ? flags.map(f => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span></div>`).join('') : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>';
+    v.appendChild(fl);
+    const wk = mondayOf(S.today);
+    const thisWeek = S.tasks.filter(t => t.type === 'assignment' && t.due >= wk && t.due < addDays(wk, 7));
+    const ahead = thisWeek.filter(t => t.doDay && t.doDay < t.due).length;
+    const tests = S.tasks.filter(t => (t.type === 'quiz' || t.type === 'test') && t.due >= wk && t.due < addDays(wk, 7));
+    const visited = tests.filter(t => S.tasks.some(x => x.type === 'visit' && x.visitFor === t.id && (x.visitSlot || x.status === 'done'))).length;
+    const h2 = document.createElement('h2'); h2.textContent = 'This week'; v.appendChild(h2);
+    const stat = document.createElement('div'); stat.className = 'stat';
+    stat.innerHTML = `<div><strong>${ahead} of ${thisWeek.length}</strong>planned ahead</div><div><strong>${S.tasks.filter(missing).length}</strong>missing</div><div><strong>${visited} of ${tests.length}</strong>tests with a visit booked</div><div><strong>${S.points || 0}</strong>points · ${S.streak || 0}-day streak</div>`;
+    v.appendChild(stat);
+    const h3 = document.createElement('h2'); h3.textContent = 'Paste grades'; v.appendChild(h3);
+    const box = document.createElement('div'); box.className = 'block';
+    box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the Veracross grade detail for the Friday sweep"></textarea><div class="row"><button class="act primary" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
+    v.appendChild(box);
+    box.querySelector('#savegrades').onclick = () => { const t = box.querySelector('#grades').value.trim(); if (t) api('grades', { text: t }).then(() => toast('Grades saved')); };
+    const h4 = document.createElement('h2'); h4.textContent = 'Recent points'; v.appendChild(h4);
+    const pts = document.createElement('div'); pts.className = 'list';
+    pts.innerHTML = (S.recentPoints || []).map(r => `<div class="hint">${esc(r.date)} · +${esc(r.points)} · ${esc(r.reason)}</div>`).join('') || '<div class="empty">No points yet.</div>';
+    v.appendChild(pts);
+    const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'To suggest a task, type it in the box at the top. Your student can accept or decline it.'; v.appendChild(p);
+  }
+
+  /* ---------------- boot ---------------- */
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && token) api('load').then(checkSlips).catch(() => {}); });
+  if (!CFG.API_URL || !CFG.CLIENT_ID) {
+    showSignin('Setup is not finished: add the API URL and client ID to config.js.');
+  } else {
+    token = loadToken();
+    if (token) start(); else showSignin();
+  }
+})();
