@@ -42,8 +42,6 @@ const CONFIG = {
   // Teachers, used in visit titles and email drafts.
   TEACHERS: { Chem: 'Mr. Chem', Photo: 'Mr. Photo', Alg: 'Mr. Algebra', Hist: 'Mr. History', Span: 'Mrs. Spanish', Eng: 'Ms. English' },
 
-  // A Photography class day when a sketchbook is due. The app counts every other Photo class from here.
-  SKETCHBOOK_START: '2026-11-16',
 
   // Membean: 4 sessions of 10 minutes in each 2-week cycle.
   MEMBEAN_CYCLE_START: '2026-11-16',

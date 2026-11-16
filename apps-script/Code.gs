@@ -320,19 +320,6 @@ function recurring(tasks, ctx) {
         title: 'Weekly teacher visit: pick a class', due: fri, doDay: day }));
     }
   });
-  // Sketchbook: due every other Photography class, starting at CONFIG.SKETCHBOOK_START.
-  const photoP = classPeriods().Photo;
-  const sbStart = CONFIG.SKETCHBOOK_START;
-  if (photoP && sbStart) {
-    const days = schoolDays(sbStart, addDays(today, 21));
-    Object.keys(days).sort().filter(d => days[d].periods.indexOf(photoP) >= 0).forEach((d, i) => {
-      if (i % 2 !== 0 || d < today) return;
-      const sid = 'sketch|' + d;
-      if (has(sid)) return;
-      tasks.push(makeTask({ source: 'auto', sourceId: sid, type: 'assignment', cls: 'Photo', paper: true,
-        title: 'Sketchbook', due: d, doDay: suggestDoDay(d, ctx) }));
-    });
-  }
   // Membean: 4 x 10 minutes per 2-week cycle.
   const start = CONFIG.MEMBEAN_CYCLE_START;
   if (start) {
@@ -391,6 +378,10 @@ function syncAll() {
       });
     });
 
+    // Sketchbooks come from the Photography calendar; remove the old automatic copies.
+    for (let i = tasks.length - 1; i >= 0; i--) {
+      if (String(tasks[i].sourceId).indexOf('sketch|') === 0) tasks.splice(i, 1);
+    }
     tasks.forEach(t => ensureExtras(t, tasks, ctx, teachers));
     recurring(tasks, ctx);
     writeTasks(tasks);
