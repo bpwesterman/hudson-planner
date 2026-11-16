@@ -81,7 +81,37 @@
   }
 
   /* ---------------- api ---------------- */
-  async function api(action, body) {
+  // Taps are sent one at a time, in order. The screen keeps the quick local
+  // changes and only takes the server's copy once nothing is still on its way,
+  // so a slow answer to an earlier tap can't undo a later one.
+  let queue = Promise.resolve();
+  let pending = 0;
+  let gainedSoFar = 0;
+  function api(action, body) {
+    if (action === 'load' && pending > 0) return queue;
+    pending++;
+    const run = queue.then(() => send(action, body));
+    queue = run.catch(() => {});
+    return run.then(data => {
+      pending--;
+      gainedSoFar += data.gained || 0;
+      if (pending === 0) apply(data);
+      return data;
+    }, err => {
+      pending--;
+      if (pending === 0 && err.message !== 'auth' && err.message !== 'signin') send('load').then(apply).catch(() => {});
+      throw err;
+    });
+  }
+  function apply(data) {
+    S = data;
+    try { localStorage.setItem('hp_cache', JSON.stringify(data)); } catch (e) { /* ignore */ }
+    if (gainedSoFar) bumpPoints(gainedSoFar);
+    gainedSoFar = 0;
+    render();
+  }
+
+  async function send(action, body) {
     if (!token) token = loadToken();
     if (!token) { showSignin(); throw new Error('signin'); }
     const res = await fetch(CFG.API_URL, {
@@ -100,10 +130,6 @@
       throw new Error('auth');
     }
     if (data.error) { toast(data.error); throw new Error(data.error); }
-    S = data;
-    try { localStorage.setItem('hp_cache', JSON.stringify(data)); } catch (e) { /* ignore */ }
-    if (data.gained) { bumpPoints(data.gained); }
-    render();
     return data;
   }
 
