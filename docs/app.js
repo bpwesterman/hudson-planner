@@ -47,6 +47,14 @@
     const diff = (new Date(s) - new Date(S.today)) / 864e5;
     return diff > 0 && diff < 7 ? WD[wd(s)] : nice(s);
   };
+  // '15:30', '17:30' -> '3:30–5:30 PM'
+  const clock = (st, en) => {
+    const f = hm => { const h = +hm.slice(0, 2) % 24, m = hm.slice(3, 5); return { t: `${h % 12 || 12}${m === '00' ? '' : ':' + m}`, ap: h < 12 ? 'AM' : 'PM' }; };
+    const a = f(st);
+    if (!en || en === st) return `${a.t} ${a.ap}`;
+    const b = f(en);
+    return a.ap === b.ap ? `${a.t}–${b.t} ${b.ap}` : `${a.t} ${a.ap}–${b.t} ${b.ap}`;
+  };
   const mondayOf = s => addDays(s, -((wd(s) + 6) % 7));
 
   /* ---------------- auth ---------------- */
@@ -545,7 +553,7 @@
     v.appendChild(nav);
     nav.querySelector('#wprev').onclick = () => { weekOffset--; render(); };
     nav.querySelector('#wnext').onclick = () => { weekOffset++; render(); };
-    if (isStudent()) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Each assignment starts on a suggested day. Drag it to another day (long-press on the phone). Striped days are short.'; v.appendChild(p); }
+    if (isStudent()) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Each assignment starts on a suggested day. Drag it to another day (long-press on the phone). Striped days have practice or family plans in the afternoon, so less time to study.'; v.appendChild(p); }
     const board = document.createElement('div'); board.className = 'board week';
     for (let i = 0; i < 7; i++) {
       const d = addDays(mon, i);
@@ -556,6 +564,7 @@
       const pins = S.tasks.filter(t => ((t.type === 'quiz' || t.type === 'test') && t.due === d) || (t.type === 'visit' && t.doDay === d && t.status !== 'done'));
       col.innerHTML = `<header><strong>${WD[wd(d)]}${d === S.today ? ' · today' : ''}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code || 'Day ' + info.day) : ''}${shortDay ? ' · short' : ''}</span></header>` +
         pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
+      col.innerHTML += ((S.busy || {})[d] || []).map(e => `<div class="cev${e.cal ? ' fam' : ''}">${e.all ? '' : `<b>${esc(clock(e.s, e.e))}</b> `}${esc(e.t)}</div>`).join('');
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
       S.tasks.filter(t => isWork(t) && t.doDay === d && ['in', 'graded', 'suggested'].indexOf(t.status) < 0).forEach(t => drop.appendChild(taskEl(t)));
       col.appendChild(drop);

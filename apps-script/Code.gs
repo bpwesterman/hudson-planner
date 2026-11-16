@@ -182,22 +182,41 @@ function classPeriods() {
   return out;
 }
 
-/** Afternoons with a busy event between 3:30 and 7 pm count as short. */
-function shortDays(from, to) {
+/** Events on the busy calendars (basketball, family), by date: [{t: title, s: 'HH:mm', e: 'HH:mm', all: bool, cal: index}]. */
+function busyEvents(from, to) {
   const out = {};
-  CONFIG.BUSY_CALENDARS.forEach(name => {
+  const add = (date, item) => { if (date >= from && date <= to) (out[date] = out[date] || []).push(item); };
+  (CONFIG.BUSY_CALENDARS || []).forEach((name, i) => {
     const cal = CalendarApp.getCalendarsByName(name)[0];
     if (!cal) return;
     cal.getEvents(toDate(from), toDate(addDays(to, 1))).forEach(ev => {
-      if (ev.isAllDayEvent()) return;
-      const s = ev.getStartTime(), e = ev.getEndTime();
-      const date = dstr(s);
-      if (s < toDate(date, '19:00') && e > toDate(date, '15:30')) {
-        (out[date] = out[date] || []).push(ev.getTitle());
+      const title = ev.getTitle();
+      if (ev.isAllDayEvent()) {
+        // An all-day event can cover several days; list it on each one.
+        const end = dstr(ev.getAllDayEndDate());
+        for (let d = dstr(ev.getAllDayStartDate()); d < end; d = addDays(d, 1)) add(d, { t: title, s: '', e: '', all: true, cal: i });
+        return;
       }
+      const st = ev.getStartTime(), en = ev.getEndTime();
+      const date = dstr(st);
+      const hm = x => Utilities.formatDate(x, CONFIG.TIMEZONE, 'HH:mm');
+      add(date, { t: title, s: hm(st), e: dstr(en) > date ? '24:00' : hm(en), all: false, cal: i });
     });
   });
+  Object.keys(out).forEach(d => out[d].sort((a, b) => (a.all ? '' : a.s) < (b.all ? '' : b.s) ? -1 : 1));
   return out;
+}
+
+/** Afternoons with a busy event between 3:30 and 7 pm count as short. */
+function shortFromBusy(busy) {
+  const out = {};
+  Object.keys(busy).forEach(d => busy[d].forEach(ev => {
+    if (!ev.all && ev.s < '19:00' && ev.e > '15:30') (out[d] = out[d] || []).push(ev.t);
+  }));
+  return out;
+}
+function shortDays(from, to) {
+  return shortFromBusy(busyEvents(from, to));
 }
 
 function context(tasks) {
@@ -383,6 +402,17 @@ function syncAll() {
       if (String(tasks[i].sourceId).indexOf('sketch|') === 0) tasks.splice(i, 1);
     }
     tasks.forEach(t => ensureExtras(t, tasks, ctx, teachers));
+    // Keep visit titles in step with the teacher names in Config and the quiz or test title.
+    tasks.forEach(t => {
+      if (t.type !== 'visit' || !t.visitFor || t.status === 'done') return;
+      const a = tasks.find(x => x.id === t.visitFor);
+      if (!a) return;
+      const want = 'See ' + (teachers[a.cls] || 'your teacher') + ' before: ' + a.title;
+      if (t.title === want) return;
+      t.title = want;
+      t.updatedAt = nowStamp();
+      if (t.visitSlot) syncVisitEvent(t);
+    });
     recurring(tasks, ctx);
     writeTasks(tasks);
     props.setProperty('INITIALIZED', '1');
@@ -702,12 +732,13 @@ function loadAll(who, tasksIn) {
   const cutoff = addDays(today, -45);
   const visible = tasks.filter(t => t.due >= cutoff || OPEN.indexOf(t.status) >= 0 || t.status === 'done' || t.fixit);
   const school = schoolDays(addDays(today, -7), addDays(today, 42));
-  const short = shortDays(addDays(today, -7), addDays(today, 42));
+  const busy = busyEvents(addDays(today, -7), addDays(today, 42));
+  const short = shortFromBusy(busy);
   const studyRows = readRows('Study').filter(r => r.date === today);
   const study = {};
   studyRows.forEach(r => { study[r.item] = r.done === 'yes'; });
   const out = {
-    role: who.role, today: today, now: nowHHMM(), tasks: visible, school: school, short: short,
+    role: who.role, today: today, now: nowHHMM(), tasks: visible, school: school, short: short, busy: busy,
     studentName: CONFIG.STUDENT_NAME || 'there', periods: classPeriods(), points: pointsTotal(), streak: streak(tasks, today), study: study, teachers: CONFIG.TEACHERS || {},
     lastSync: PropertiesService.getScriptProperties().getProperty('LAST_SYNC') || '',
   };
