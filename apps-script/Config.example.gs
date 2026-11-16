@@ -11,8 +11,8 @@ const CONFIG = {
   STUDENT_NAME: 'Student',
 
   // Who may sign in. The student gets the student app, parents get the parent view.
-  STUDENT_EMAIL: 'student@example.com',
-  PARENT_EMAILS: ['parent1@example.com', 'parent2@example.com'],
+  STUDENT_EMAIL: 'hudsonwesterman@gmail.com',
+  PARENT_EMAILS: 'svwesterman@gmail.com',
 
   TIMEZONE: 'America/New_York',
 
