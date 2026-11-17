@@ -327,7 +327,7 @@
         <label class="field">Plan to do it<input type="date" id="f-do" value="${esc(t.doDay)}" ${ro ? 'disabled' : ''}></label>
       </div>
       <label class="field">Class<select id="f-cls" ${ro ? 'disabled' : ''}><option value="">None</option>${Object.keys(CLASSES).map(k => `<option value="${k}" ${t.cls === k ? 'selected' : ''}>${CLASSES[k].name}</option>`).join('')}</select></label>
-      <label class="field"><span><input type="checkbox" id="f-paper" ${t.paper ? 'checked' : ''} ${ro ? 'disabled' : ''}> Paper to hand in</span></label>
+      <label class="check"><input type="checkbox" id="f-paper" ${t.paper ? 'checked' : ''} ${ro ? 'disabled' : ''}><span>Check box if assignment is paper to hand in</span></label>
       <label class="field">Note<textarea id="f-note" rows="2" ${ro ? 'disabled' : ''}>${esc(t.note)}</textarea></label>
       ${t.minutes ? `<div class="hint">Took ${t.minutes >= 120 ? '2+ hr' : t.minutes + ' min'}</div>` : ''}
       <div class="row">${ro ? '' : '<button class="act primary" id="f-save">Save</button>'}<button class="act" id="f-close">Close</button></div>
