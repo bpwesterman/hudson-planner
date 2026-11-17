@@ -761,13 +761,15 @@ function redFlags(tasks, today) {
       flags.push({ kind: 'Gradebook disagrees', text: label(t) + ': marked turned in, gradebook says ' + t.conflict, id: t.id });
     }
     if (t.slipReason && t.slipDate >= addDays(today, -7)) {
-      flags.push({ kind: 'Missed plan', text: label(t) + ' — reason: ' + t.slipReason, id: t.id });
+      flags.push({ kind: 'Missed plan', text: label(t) + ' — reason: ' + t.slipReason, id: t.id, extra: t.slipDate });
     }
     if (t.type === 'assignment' && OPEN.indexOf(t.status) >= 0 && t.doDay === t.due && t.due >= today) {
       flags.push({ kind: 'Planned for the due day', text: label(t), id: t.id });
     }
   });
-  return flags;
+  const gone = dismissedFlags();
+  flags.forEach(f => { f.key = flagKey(f); });
+  return flags.filter(f => gone.indexOf(f.key) < 0);
 }
 
 function parentDigest() {
@@ -808,6 +810,7 @@ function verify(idToken) {
   const cache = CacheService.getScriptCache();
   const key = 'tok' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken));
   let email = cache.get(key);
+  let name = cache.get(key + 'n') || '';
   if (!email) {
     const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken), { muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return { fail: 'Google did not accept the sign-in token (code ' + res.getResponseCode() + '). Try signing in again.' };
@@ -817,10 +820,12 @@ function verify(idToken) {
     }
     if (String(info.email_verified) !== 'true') return { fail: 'This Google account\'s email is not verified.' };
     email = String(info.email).toLowerCase();
+    name = String(info.given_name || '');
     cache.put(key, email, 1800);
+    cache.put(key + 'n', name, 1800);
   }
   if ([].concat(CONFIG.STUDENT_EMAIL).map(x => String(x).trim().toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'student' };
-  if ([].concat(CONFIG.PARENT_EMAILS).map(x => String(x).trim().toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'parent' };
+  if ([].concat(CONFIG.PARENT_EMAILS).map(x => String(x).trim().toLowerCase()).indexOf(email) >= 0) return { email: email, role: 'parent', name: name };
   return { fail: email + ' is not on the list in Config. Sign in with a family account, or add it and deploy a new version.' };
 }
 
@@ -953,6 +958,18 @@ function handle(req, who) {
       if (who.role !== 'parent') throw new Error('Not allowed');
       appendRow('Grades', { pastedAt: nowStamp(), by: who.email, text: String(req.text || '').slice(0, 45000) });
       gradeResult = checkGradebook(String(req.text || ''), tasks);
+    } else if (req.action === 'dismiss') {
+      if (who.role !== 'parent') throw new Error('Only a parent can dismiss an alert');
+      const key = String(req.key || '');
+      const t = byId[key.split('|')[1]];
+      const pts = Math.round(Number(req.points || 0));
+      if (pts < 0 || pts > 1000) throw new Error('Points must be a whole number from 0 to 1000');
+      const gone = dismissedFlags();
+      if (gone.indexOf(key) < 0) gone.push(key);
+      PropertiesService.getScriptProperties().setProperty('DISMISSED', JSON.stringify(gone.slice(-400)));
+      const kind = key.split('|')[0];
+      if (pts) appendRow('Points', { date: today, points: -pts, reason: 'Removed by parent: ' + kind + (t ? ' (' + t.title + ')' : ''), taskId: t ? t.id : '' });
+      if (t) logEvent(t, whoName(who), 'Parent dismissed the "' + kind + '" alert' + (pts ? ' and removed ' + pts + ' point' + (pts === 1 ? '' : 's') : ' without a penalty'));
     } else if (req.action === 'confirmGrade') {
       if (who.role !== 'parent') throw new Error('Only a parent can confirm a grade');
       const t = byId[String(req.id)];
@@ -979,8 +996,14 @@ function handle(req, who) {
 }
 
 function whoName(who) {
-  return who.role === 'student' ? (CONFIG.STUDENT_NAME || 'Student') : 'Parent';
+  return who.role === 'student' ? (CONFIG.STUDENT_NAME || 'Student') : (who.name ? who.name + ' (parent)' : 'Parent');
 }
+
+/* Parent alerts a parent dismissed. Stored as keys like "Missing|<id>" in a script property. */
+function dismissedFlags() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('DISMISSED') || '[]'); } catch (e) { return []; }
+}
+function flagKey(f) { return f.kind + '|' + f.id + (f.extra ? '|' + f.extra : ''); }
 
 /** Records what changed when the student saves a task. */
 function logSave(before, t, who) {

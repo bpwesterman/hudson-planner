@@ -194,3 +194,6 @@ textarea{width:100%}
 .story li::before{content:"";position:absolute;left:-20px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
 .story li.pts::before{background:var(--good)}
 .story .when{display:block;font-size:12px;color:var(--muted)}
+.flag span{flex:1;min-width:0}
+.flag .act{flex:0 0 auto;align-self:center;min-height:36px;padding:6px 12px}
+#dfree,#dpen{white-space:normal;line-height:1.2;padding-inline:10px}
