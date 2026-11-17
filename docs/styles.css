@@ -95,7 +95,8 @@ a.act{display:inline-flex;align-items:center;justify-content:center;text-align:c
 .stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .stat div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
 .stat strong{display:block;font-family:var(--display);font-size:24px;font-variant-numeric:tabular-nums}
-.quick{display:flex;gap:8px}
+.quick{display:flex;gap:8px;width:50%;margin-bottom:15px}
+@media (max-width:760px){.quick{width:100%}}
 .quick input{flex:1;min-width:0;font:15px var(--body);padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg);min-height:48px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 .pop{animation:pop .5s ease}
@@ -109,13 +110,14 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .subtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .subtabs button{font:600 13px var(--body);border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:8px 12px;border-radius:999px;cursor:pointer;min-height:40px}
 .subtabs button[aria-pressed="true"]{background:var(--c,var(--accent));border-color:var(--c,var(--accent));color:#fff}
-.weeknav{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.weeknav strong{font-family:var(--display);font-size:17px;flex:1;text-align:center}
+.weeknav{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}
+.weeknav strong{font-family:var(--display);font-size:17px;text-align:center;min-width:170px}
 .month{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
 .month .dh{font-size:12px;color:var(--muted);text-align:center;font-weight:600}
 .month .cell{background:var(--surface);border:1px solid var(--line);border-radius:8px;min-height:64px;padding:4px;font-size:11px;display:flex;flex-direction:column;gap:2px;min-width:0}
 .month .cell.out{opacity:.4}
 .month .cell.today{border-color:var(--accent);border-width:2px}
+.month button.ev{border:0;font:inherit;text-align:left;cursor:pointer;width:100%}
 .month .ev{border-radius:4px;padding:1px 4px;color:#fff;background:var(--c,var(--accent));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 .field input,.field select,.field textarea{font:15px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);min-height:44px}
@@ -164,7 +166,8 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .conflict.done{background:var(--surface);border-color:var(--line);border-left-color:var(--good)}
 .conflict.done .act{background:var(--surface-2);color:var(--fg)}
 .tip{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:var(--r);background:var(--surface);border:1px solid var(--line);border-left:6px solid var(--good)}
-.tip .row .skip{flex:0 0 auto}
+.tip .row{justify-content:flex-start}
+.tip .row>*{flex:0 0 auto;min-width:0}
 .gprob{font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)}
 .flag.ok b{color:var(--good)}
 .stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
