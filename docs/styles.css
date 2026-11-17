@@ -142,6 +142,8 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .bookv .slot{font-size:12px;padding:6px 8px;min-height:36px}
 .bookv .email{font-size:12px}
 .bookv .row>*{min-width:0}
+.check{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--fg);cursor:pointer;min-height:44px}
+.check input{width:20px;height:20px;margin:0;flex:0 0 auto;accent-color:var(--accent)}
 .row.adj{align-items:flex-end}
 .row.adj .field:not(.grow){flex:0 0 140px}
 .row.adj .grow{flex:1 1 220px}
