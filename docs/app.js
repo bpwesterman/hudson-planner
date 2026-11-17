@@ -435,7 +435,7 @@
       ${isStudent() ? `${showPicker ? '<h4 class="sub">Suggested</h4>' : ''}<div class="slots">${opts.map(([d, s]) => slotBtn(d, s, `${s} · ${short(d)}`)).join('')}</div>` : ''}
       ${showPicker ? `<h4 class="sub">Or pick a day</h4>${pickerHtml(days, pickSel)}<div id="dayinfo"></div>` : ''}
       <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
-      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" ${MAIL_TARGET}>Open in Gmail</a>' : ''}</div>
+      <div class="row">${isStudent() ? `<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" ${MAIL_TARGET}>Open in Gmail</a>` : ''}</div>
       <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>
       ${delHtml(t)}`, p => {
       p.querySelector('#close').onclick = closeSheet;
