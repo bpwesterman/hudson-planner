@@ -11,7 +11,10 @@
 const FIELDS = ['id', 'source', 'sourceId', 'cls', 'title', 'type', 'due', 'doDay', 'status', 'paper',
   'pinned', 'createdAt', 'doneAt', 'turnedInAt', 'minutes', 'slipReason', 'slipDate', 'visitFor',
   'visitSlot', 'fixit', 'note', 'pointsGiven', 'updatedAt',
-  'conflict', 'conflictState', 'conflictAt', 'gradebookItem', 'confirmedGrade', 'confirmedNote', 'confirmedAt'];
+  'conflict', 'conflictState', 'conflictAt', 'gradebookItem', 'confirmedGrade', 'confirmedNote', 'confirmedAt',
+  'noTurnIn'];
+// Finished: turned in, graded, or done on work that has nothing to hand in.
+function finished(t) { return ['in', 'graded'].indexOf(t.status) >= 0 || (t.status === 'done' && !!t.noTurnIn); }
 const OPEN = ['todo', 'doing'];
 const SHEETS = {
   Tasks: FIELDS,
@@ -122,6 +125,7 @@ function readTasks() {
     t.paper = t.paper === true || t.paper === 'TRUE';
     t.pinned = t.pinned === true || t.pinned === 'TRUE';
     t.fixit = t.fixit === true || t.fixit === 'TRUE';
+    t.noTurnIn = t.noTurnIn === true || t.noTurnIn === 'TRUE';
     t.minutes = t.minutes ? Number(t.minutes) : '';
     t.id = String(t.id);
     return t;
@@ -313,7 +317,7 @@ function ensureExtras(assess, tasks, ctx, teachers) {
 function makeTask(p) {
   return Object.assign({
     id: newId(), source: 'manual', sourceId: '', cls: '', title: '', type: 'assignment', due: '',
-    doDay: '', status: 'todo', paper: false, pinned: false, createdAt: nowStamp(), doneAt: '',
+    doDay: '', status: 'todo', paper: false, noTurnIn: false, pinned: false, createdAt: nowStamp(), doneAt: '',
     turnedInAt: '', minutes: '', slipReason: '', slipDate: '', visitFor: '', visitSlot: '', fixit: false,
     note: '', pointsGiven: '', updatedAt: nowStamp(),
   }, p);
@@ -469,7 +473,7 @@ function checkGradebook(text, tasks) {
     const problem = gradebookProblem(it);
     if (!problem) return;
     const t = matchTask(it, tasks);
-    if (t && ['in', 'graded'].indexOf(t.status) >= 0) {
+    if (t && finished(t)) {
       if (!t.conflictState) {
         t.conflict = problem;
         t.conflictState = 'open';
@@ -598,7 +602,7 @@ function refreshReminders(tasks, ctx) {
   [today, addDays(today, 1)].forEach(date => {
     cal.getEventsForDay(toDate(date, '12:00')).forEach(ev => { if (ev.getTag('hp')) ev.deleteEvent(); });
 
-    const pack = tasks.filter(t => t.paper && t.due === date && ['in', 'graded'].indexOf(t.status) < 0 && t.type === 'assignment');
+    const pack = tasks.filter(t => t.paper && t.due === date && !finished(t) && t.type === 'assignment');
     const visits = tasks.filter(t => t.type === 'visit' && t.doDay === date && t.status !== 'done');
     if ((pack.length || visits.length) && !(date === today && now >= CONFIG.MORNING_REMINDER)) {
       const parts = [];
@@ -670,6 +674,9 @@ function award(t, key, pts, reason) {
 function applyPoints(before, after) {
   const today = todayStr();
   let got = 0;
+  if (after.noTurnIn && after.type === 'assignment' && after.status === 'done' && OPEN.indexOf(before.status) >= 0) {
+    got += award(after, 'in', today <= after.due ? 10 : 5, today <= after.due ? 'Finished on time' : 'Finished late');
+  }
   if (after.status === 'in' && before.status !== 'in') {
     got += award(after, 'in', today <= after.due ? 10 : 5, today <= after.due ? 'Turned in on time' : 'Turned in late');
   }
@@ -708,9 +715,9 @@ function streak(tasks, today) {
 function redFlags(tasks, today) {
   const flags = [];
   tasks.forEach(t => {
-    if (t.type === 'assignment' && t.due < today && ['in', 'graded'].indexOf(t.status) < 0 && t.status !== 'suggested') {
+    if (t.type === 'assignment' && t.due < today && !finished(t) && t.status !== 'suggested') {
       flags.push({ kind: 'Missing', text: label(t) + ' (due ' + t.due + ')', id: t.id });
-    } else if (t.type === 'assignment' && t.status === 'done' && t.due <= today) {
+    } else if (t.type === 'assignment' && t.status === 'done' && !t.noTurnIn && t.due <= today) {
       flags.push({ kind: 'Done, not turned in', text: label(t), id: t.id });
     }
     if (t.type === 'visit' && t.visitFor && t.status !== 'done' && !t.visitSlot && t.doDay <= addDays(today, 1) && t.doDay >= today) {
@@ -805,7 +812,7 @@ function handle(req, who) {
       if (!t) throw new Error('Task not found');
       if (who.role !== 'student') throw new Error('Only the student can change tasks');
       const before = Object.assign({}, t);
-      ['title', 'cls', 'due', 'doDay', 'status', 'paper', 'minutes', 'visitSlot', 'note', 'fixit'].forEach(f => {
+      ['title', 'cls', 'due', 'doDay', 'status', 'paper', 'noTurnIn', 'minutes', 'visitSlot', 'note', 'fixit'].forEach(f => {
         if (req.task[f] !== undefined) t[f] = req.task[f];
       });
       if (req.task.doDay !== undefined && req.task.doDay !== before.doDay) t.pinned = true;
@@ -860,7 +867,7 @@ function handle(req, who) {
     } else if (req.action === 'reset') {
       if (who.role !== 'student') throw new Error('Not allowed');
       tasks.forEach(t => {
-        if (t.type === 'assignment' && ['in', 'graded', 'suggested'].indexOf(t.status) < 0 && (t.doDay < today || t.due < today)) {
+        if (t.type === 'assignment' && !finished(t) && t.status !== 'suggested' && (t.doDay < today || t.due < today)) {
           t.fixit = true;
           t.doDay = today;
         }

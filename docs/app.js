@@ -162,7 +162,10 @@
   const isStudent = () => S && S.role === 'student';
   const cls = t => CLASSES[t.cls] || { name: '', color: 'var(--muted)' };
   const isWork = t => WORK_TYPES.indexOf(t.type) >= 0;
-  const missing = t => t.type === 'assignment' && t.due < S.today && ['in', 'graded', 'suggested'].indexOf(t.status) < 0;
+  // Finished: turned in, graded, or done on work that has nothing to hand in.
+  const finished = t => ['in', 'graded'].indexOf(t.status) >= 0 || (t.status === 'done' && !!t.noTurnIn);
+  const needsTurnIn = t => t.type === 'assignment' && !t.noTurnIn;
+  const missing = t => t.type === 'assignment' && t.due < S.today && !finished(t) && t.status !== 'suggested';
 
   function saveTask(t, patch, msg) {
     const before = Object.assign({}, t);
@@ -260,7 +263,8 @@
     if (opts.showDo && t.doDay && t.type !== 'visit') tags.push(`<span>Plan: ${esc(short(t.doDay))}</span>`);
     if (isWork(t) && t.type === 'assignment' && OPEN.indexOf(t.status) >= 0 && t.doDay === t.due && t.due >= S.today) tags.push('<span class="tag warn">Planned on due day</span>');
     if (t.paper) tags.push('<span class="tag">Paper</span>');
-    if (t.status === 'done' && t.type === 'assignment') tags.push('<span class="tag warn">Not turned in</span>');
+    if (t.status === 'done' && needsTurnIn(t)) tags.push('<span class="tag warn">Not turned in</span>');
+    if (t.status === 'done' && t.noTurnIn) tags.push('<span class="tag good">Done</span>');
     if (t.status === 'in') tags.push('<span class="tag good">Turned in</span>');
     if (t.fixit) tags.push('<span class="tag">Fix-it</span>');
     if (t.source === 'parent') tags.push('<span class="tag">From parent</span>');
@@ -269,7 +273,7 @@
       let label = null, fn = null, primary = false;
       if (t.status === 'suggested') { label = 'Accept'; primary = true; fn = () => api('accept', { id: t.id, accept: true }); }
       else if (t.type === 'visit' && t.status !== 'done') { label = 'I went'; fn = () => saveTask(t, { status: 'done' }, 'Visit logged'); }
-      else if (t.status === 'done' && t.type === 'assignment') { label = 'I turned it in'; primary = true; fn = () => saveTask(t, { status: 'in' }); }
+      else if (t.status === 'done' && needsTurnIn(t)) { label = 'I turned it in'; primary = true; fn = () => saveTask(t, { status: 'in' }); }
       else if (OPEN.indexOf(t.status) >= 0) { label = 'Done'; fn = () => markDone(t); }
       if (label) {
         const b = document.createElement('button');
@@ -289,14 +293,15 @@
     return d;
   }
 
-  function markDone(t) {
+  function markDone(t, after) {
     const patch = { status: 'done' };
     if (t.type !== 'assignment') patch.status = 'done';
     saveTask(t, patch, 'Marked done');
-    if (t.type === 'visit') return;
+    if (t.type === 'visit') return after && after();
+    const fin = () => { closeSheet(); if (after) setTimeout(after, 400); };
     sheet(`<h3>Nice. How long did it take?</h3><div class="picks">${MINUTES.map(([l, m]) => `<button data-m="${m}">${l}</button>`).join('')}</div><button class="act" data-skip>Skip</button>`, p => {
-      p.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { closeSheet(); saveTask(t, { minutes: +b.dataset.m }); });
-      p.querySelector('[data-skip]').onclick = closeSheet;
+      p.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { fin(); saveTask(t, { minutes: +b.dataset.m }); });
+      p.querySelector('[data-skip]').onclick = fin;
     });
   }
 
@@ -321,13 +326,14 @@
     sheet(`
       <h3>${esc(t.title)}</h3>
       <div class="hint">${esc(c.name)}${c.turnIn ? ' · Turn in: ' + esc(c.turnIn) : ''}${c.late ? ' · ' + esc(c.late) : ''}</div>
-      ${ro ? '' : `<div class="seg" id="segstat">${STATUS.map(([k, l]) => `<button data-s="${k}" aria-pressed="${t.status === k}">${l}</button>`).join('')}</div>`}
+      ${ro ? '' : `<div class="seg" id="segstat">${STATUS.filter(([k]) => k !== 'in' || needsTurnIn(t) || t.status === 'in').map(([k, l]) => `<button data-s="${k}" aria-pressed="${t.status === k}">${l}</button>`).join('')}</div>`}
       <div class="row">
         <label class="field">Due<input type="date" id="f-due" value="${esc(t.due)}" ${ro ? 'disabled' : ''}></label>
         <label class="field">Plan to do it<input type="date" id="f-do" value="${esc(t.doDay)}" ${ro ? 'disabled' : ''}></label>
       </div>
       <label class="field">Class<select id="f-cls" ${ro ? 'disabled' : ''}><option value="">None</option>${Object.keys(CLASSES).map(k => `<option value="${k}" ${t.cls === k ? 'selected' : ''}>${CLASSES[k].name}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" id="f-paper" ${t.paper ? 'checked' : ''} ${ro ? 'disabled' : ''}><span>Check box if assignment is paper to hand in</span></label>
+      ${t.type === 'assignment' ? `<label class="check"><input type="checkbox" id="f-noturn" ${t.noTurnIn ? 'checked' : ''} ${ro ? 'disabled' : ''}><span>Nothing to turn in (practice, prep or in-class work). Done means finished.</span></label>` : ''}
       <label class="field">Note<textarea id="f-note" rows="2" ${ro ? 'disabled' : ''}>${esc(t.note)}</textarea></label>
       ${t.minutes ? `<div class="hint">Took ${t.minutes >= 120 ? '2+ hr' : t.minutes + ' min'}</div>` : ''}
       <div class="row">${ro ? '' : '<button class="act primary" id="f-save">Save</button>'}<button class="act" id="f-close">Close</button></div>
@@ -344,7 +350,7 @@
         closeSheet();
         saveTask(t, {
           due: p.querySelector('#f-due').value, doDay: p.querySelector('#f-do').value, cls: p.querySelector('#f-cls').value,
-          paper: p.querySelector('#f-paper').checked, note: p.querySelector('#f-note').value,
+          paper: p.querySelector('#f-paper').checked, noTurnIn: !!(p.querySelector('#f-noturn') || {}).checked, note: p.querySelector('#f-note').value,
         }, 'Saved');
       };
     });
@@ -482,9 +488,16 @@
     if (!slipped.length) return;
     const t = slipped[0];
     askedSlip[t.id] = true;
-    sheet(`<h3>${esc(t.title)} didn't happen ${esc(short(t.doDay))}. What got in the way?</h3>
-      <div class="picks">${SLIP_REASONS.map(r => `<button data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>
-      <div class="hint">No big deal. Pick one and the app finds a new day.</div>`, p => {
+    const turnIn = needsTurnIn(t);
+    sheet(`<h3>Did you get to ${esc(t.title)}? It was planned for ${esc(short(t.doDay))}.</h3>
+      <div class="picks">${turnIn ? '<button data-ok="in">Yes, and I turned it in</button>' : ''}<button data-ok="done">${turnIn ? 'Yes, I did it (not turned in yet)' : 'Yes, I did it'}</button></div>
+      <div class="hint">Not yet? No big deal. Pick what got in the way and the app finds a new day.</div>
+      <div class="picks">${SLIP_REASONS.map(r => `<button data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>`, p => {
+      p.querySelectorAll('[data-ok]').forEach(b => b.onclick = () => {
+        closeSheet();
+        if (b.dataset.ok === 'in') { saveTask(t, { status: 'in' }, 'Turned in. Nice.'); setTimeout(checkSlips, 600); }
+        else { markDone(t, checkSlips); }
+      });
       p.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
         closeSheet();
         api('slip', { id: t.id, reason: b.dataset.r }).then(() => { toast('Rescheduled'); setTimeout(checkSlips, 600); });
@@ -581,10 +594,10 @@
     if (conflicts.length) conflictList(left, conflicts, 'Needs attention');
     const sugg = tasks.filter(t => t.status === 'suggested');
     if (sugg.length) section(left, 'Suggested by a parent', sugg, { action: true });
-    const fix = tasks.filter(t => t.fixit && ['in', 'graded'].indexOf(t.status) < 0);
+    const fix = tasks.filter(t => t.fixit && !finished(t));
     if (fix.length) section(left, 'Fix-it list', fix, { action: true });
-    section(left, 'Pack before school', tasks.filter(t => t.paper && t.due === S.today && ['in', 'graded', 'suggested'].indexOf(t.status) < 0), { action: true }, 'No paper to hand in today.');
-    section(left, 'Done, not turned in yet', tasks.filter(t => t.status === 'done' && t.type === 'assignment' && !(t.paper && t.due === S.today)), { action: true }, 'All caught up.');
+    section(left, 'Pack before school', tasks.filter(t => t.paper && t.due === S.today && !finished(t) && t.status !== 'suggested'), { action: true }, 'No paper to hand in today.');
+    section(left, 'Done, not turned in yet', tasks.filter(t => t.status === 'done' && needsTurnIn(t) && !(t.paper && t.due === S.today)), { action: true }, 'All caught up.');
     const plan = tasks.filter(t => isWork(t) && OPEN.indexOf(t.status) >= 0 && t.doDay && t.doDay <= S.today && !t.fixit)
       .sort((a, b) => orderOf(a) - orderOf(b) || (a.due < b.due ? -1 : 1));
     const list = section(left, 'Plan for today', plan, { action: true, drag: true }, 'Nothing planned today. Nice work.');
@@ -698,7 +711,7 @@
         pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
       col.innerHTML += ((S.busy || {})[d] || []).map(e => `<div class="cev${e.cal ? ' fam' : ''}">${e.all ? '' : `<b>${esc(clock(e.s, e.e))}</b> `}${esc(e.t)}</div>`).join('');
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
-      S.tasks.filter(t => isWork(t) && t.doDay === d && ['in', 'graded', 'suggested'].indexOf(t.status) < 0).forEach(t => drop.appendChild(taskEl(t)));
+      S.tasks.filter(t => isWork(t) && t.doDay === d && !finished(t) && t.status !== 'suggested').forEach(t => drop.appendChild(taskEl(t)));
       col.appendChild(drop);
       board.appendChild(col);
       if (isStudent() && window.Sortable) {
@@ -752,7 +765,7 @@
     main.appendChild(card);
     const mine = S.tasks.filter(t => t.cls === classTab);
     section(main, 'Missing', mine.filter(missing), { action: true }, 'Nothing missing.');
-    section(main, 'Coming up', mine.filter(t => t.due >= S.today && ['in', 'graded'].indexOf(t.status) < 0 && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
+    section(main, 'Coming up', mine.filter(t => t.due >= S.today && !finished(t) && t.type !== 'visit').sort((a, b) => a.due < b.due ? -1 : 1), { action: true, showDo: true }, 'Nothing posted yet.');
     if (isStudent()) bookVisitCard(side, classTab); else side.remove();
     section(recent, 'Recently turned in', mine.filter(t => t.status === 'in').sort((a, b) => a.due > b.due ? -1 : 1).slice(0, 8), {}, 'Nothing yet.');
   }
@@ -879,7 +892,7 @@
     const conflicts = openConflicts();
     if (conflicts.length) conflictList(v, conflicts, 'Needs attention');
     section(v, 'Missing (past due, not turned in)', S.tasks.filter(missing).sort((a, b) => a.due < b.due ? -1 : 1), { action: true }, 'Nothing missing. Great job.');
-    section(v, 'Done, not turned in', S.tasks.filter(t => t.status === 'done' && t.type === 'assignment'), { action: true }, 'All caught up.');
+    section(v, 'Done, not turned in', S.tasks.filter(t => t.status === 'done' && needsTurnIn(t)), { action: true }, 'All caught up.');
     const note = document.createElement('p'); note.className = 'hint';
     note.textContent = 'Algebra takes late work for partial credit. Chemistry takes it until the end of the unit. Check Veracross for anything showing 0 or "Not Turned In".';
     v.appendChild(note);
