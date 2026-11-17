@@ -20,7 +20,6 @@
   const WORK_TYPES = ['assignment', 'study', 'routine', 'sweep'];
   const SLIP_REASONS = ['Ran out of time', 'Forgot', "Didn't understand it", 'Basketball or plans', 'Felt stuck', 'Other'];
   const MINUTES = [['15 min', 15], ['30 min', 30], ['1 hr', 60], ['2+ hr', 120]];
-  const STUDY = ['15 min Spanish', '15 min History or Membean', '15 min for the next test'];
   const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   // Short day labels for calendar grids and headers.
   const WD2 = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
@@ -599,15 +598,82 @@
     const visits = tasks.filter(t => t.type === 'visit' && t.status !== 'done' && t.visitSlot && t.doDay === S.today);
     section(right, "Today's teacher visits", visits, { action: true }, 'No teacher visits booked for today.');
     if (isStudent()) bookVisitCard(right, todayVisitCls, true);
-    const h2 = document.createElement('h2'); h2.textContent = 'Daily study'; right.appendChild(h2);
-    const st = document.createElement('div'); st.className = 'study';
-    STUDY.forEach((item, i) => {
-      const l = document.createElement('label');
-      l.innerHTML = `<input type="checkbox" id="study${i}" ${S.study && S.study[item] ? 'checked' : ''} ${isStudent() ? '' : 'disabled'}> ${esc(item)}`;
-      l.querySelector('input').onchange = e => { S.study[item] = e.target.checked; api('study', { item, done: e.target.checked }); };
-      st.appendChild(l);
+    getAhead(right);
+  }
+  /* ---------------- get ahead: suggestions with a one-tap fix ---------------- */
+  // Looks at the plan and the next two weeks and offers a few small moves that build
+  // preparation and an "extra credit" habit. Each one has a button that makes the change.
+  function suggestions() {
+    const T0 = S.today, out = [];
+    const open = t => OPEN.indexOf(t.status) >= 0;
+    const work = S.tasks.filter(t => isWork(t) && open(t));
+    const load = d => work.filter(t => t.doDay === d).length;
+    // Study nights: Sun–Thu, not a striped (busy) afternoon.
+    const studyNight = d => wd(d) <= 4 && !(S.short || {})[d];
+    const on = d => (d === T0 || d === addDays(T0, 1)) ? short(d) : 'on ' + short(d);
+    const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
+    const nextDays = n => Array.from({ length: n }, (_, i) => addDays(T0, i));
+    const tests = S.tasks.filter(t => (t.type === 'test' || t.type === 'quiz') && t.due > T0 && t.due <= addDays(T0, 10) && open(t)).sort((a, b) => a.due < b.due ? -1 : 1);
+
+    // 1. A test is coming: add one more short review on the lightest night before it.
+    tests.filter(t => t.type === 'test' || t.due <= addDays(T0, 5)).forEach(t => {
+      if (S.tasks.some(x => x.type === 'study' && x.title.indexOf('Extra review') === 0 && x.title.indexOf(t.title) >= 0)) return;
+      const nights = nextDays(10).filter(d => d < t.due && studyNight(d) && d >= T0);
+      if (!nights.length) return;
+      const day = nights.slice().sort((a, b) => load(a) - load(b) || (a < b ? 1 : -1))[0];
+      out.push({ key: 'study|' + t.id, why: `${t.type === 'test' ? 'Test' : 'Quiz'} ${short(t.due)}`,
+        text: `Add an extra 15-minute review for ${cls(t).name ? cls(t).name + ' ' : ''}${t.title} ${on(day)}.`,
+        run: () => api('add', { task: { type: 'study', cls: t.cls, title: `Extra review for ${t.title}`, due: day } }).then(() => toast(`Extra review added ${on(day)}`), () => {}) });
     });
-    right.appendChild(st);
+
+    // 2. A heavy or busy night coming up, a light night before it: move one assignment earlier.
+    const days = nextDays(7);
+    for (const d of days.slice(1)) {
+      const heavy = load(d) >= 3 || ((S.short || {})[d] && load(d) >= 1);
+      if (!heavy) continue;
+      const light = days.filter(e => e < d && studyNight(e) && load(e) <= 1)[0];
+      const move = work.filter(t => t.doDay === d && t.type === 'assignment').sort((a, b) => a.due < b.due ? -1 : 1)[0];
+      if (!light || !move) continue;
+      out.push({ key: 'move|' + move.id + '|' + light, why: cap(short(d)) + ((S.short || {})[d] ? ' is busy' : ' is heavy'),
+        text: `${cap(short(light))} is light. Do ${move.title} (${cls(move).name}) ${on(light)} instead of ${short(d)}?`,
+        run: () => saveTask(move, { doDay: light }, `Moved to ${short(light)}`) });
+      break;
+    }
+
+    // 3. Extra-credit mindset: a light night today, start something due later.
+    if (load(T0) <= 1 && studyNight(T0)) {
+      const ahead = work.filter(t => t.type === 'assignment' && t.doDay > T0 && t.due >= addDays(T0, 3)).sort((a, b) => a.due < b.due ? -1 : 1)[0];
+      if (ahead) out.push({ key: 'ahead|' + ahead.id, why: 'Light night', text: `Tonight is light. Get ahead and do ${ahead.title} (${cls(ahead).name}, due ${short(ahead.due)}) today?`,
+        run: () => saveTask(ahead, { doDay: T0 }, 'Moved to today. Nice!') });
+    }
+
+    // 4. Missing work in a class that still takes it late: put it on today's plan.
+    const late = S.tasks.filter(t => missing(t) && (t.cls === 'Alg' || t.cls === 'Chem') && !(t.doDay && t.doDay <= T0)).sort((a, b) => a.due < b.due ? 1 : -1)[0];
+    if (late) out.push({ key: 'late|' + late.id, why: 'Partial credit', text: `${cls(late).name} still takes late work. Finish ${late.title} today for partial credit?`,
+      run: () => saveTask(late, { doDay: T0 }, 'Added to today') });
+
+    let skipped = {};
+    try { skipped = JSON.parse(localStorage.getItem('hp_skip_' + T0) || '{}'); } catch (e) { skipped = {}; }
+    return out.filter(x => !skipped[x.key]).slice(0, 4);
+  }
+  function getAhead(parent) {
+    const h = document.createElement('h2'); h.textContent = 'Get ahead'; parent.appendChild(h);
+    const list = document.createElement('div'); list.className = 'list';
+    const items = suggestions();
+    if (!items.length) list.innerHTML = '<div class="empty">Nothing to suggest right now. Your plan looks solid.</div>';
+    items.forEach(x => {
+      const el = document.createElement('div'); el.className = 'tip';
+      el.innerHTML = `<div class="hint">${esc(x.why)}</div><div>${esc(x.text)}</div>${isStudent() ? '<div class="row"><button class="act primary yes">Yes, do this!</button><button class="act skip">Not now</button></div>' : ''}`;
+      if (isStudent()) {
+        el.querySelector('.yes').onclick = () => x.run();
+        el.querySelector('.skip').onclick = () => {
+          try { const k = 'hp_skip_' + S.today; const o = JSON.parse(localStorage.getItem(k) || '{}'); o[x.key] = 1; localStorage.setItem(k, JSON.stringify(o)); } catch (e) { /* ignore */ }
+          render();
+        };
+      }
+      list.appendChild(el);
+    });
+    parent.appendChild(list);
   }
   function orderOf(t) {
     try { const o = JSON.parse(localStorage.getItem('hp_order_' + S.today) || '[]'); const i = o.indexOf(String(t.id)); return i < 0 ? 999 : i; } catch (e) { return 999; }
