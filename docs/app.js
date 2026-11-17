@@ -351,6 +351,14 @@
   }
 
   /* ---------------- teacher visits ---------------- */
+  // Email drafts open in Gmail, never the phone's default mail app. On an iPhone or iPad this
+  // opens the Gmail app's compose screen; everywhere else (Chromebook, laptop, Android) it opens
+  // Gmail compose in a new browser tab.
+  const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const MAIL_TARGET = IOS ? '' : 'target="_blank" rel="noopener"';
+  const gmailHref = (subject, body) => IOS
+    ? `googlegmail:///co?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    : `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   const SLOT_TUT = 'Tutorial 11:35', SLOT_ACT = 'Activities 12:00', SLOT_SIX = '6th period', SLOT_EMAIL = 'Before or after school (email first)';
   const canVisit = info => !!info && (info.rb || (info.periods || '').indexOf('6') >= 0);
   // The standard visit times on one school day; times the day's schedule doesn't have are left out.
@@ -427,7 +435,7 @@
       ${isStudent() ? `${showPicker ? '<h4 class="sub">Suggested</h4>' : ''}<div class="slots">${opts.map(([d, s]) => slotBtn(d, s, `${s} · ${short(d)}`)).join('')}</div>` : ''}
       ${showPicker ? `<h4 class="sub">Or pick a day</h4>${pickerHtml(days, pickSel)}<div id="dayinfo"></div>` : ''}
       <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
-      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" target="_blank" rel="noopener">Open in email</a>' : ''}</div>
+      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" ${MAIL_TARGET}>Open in Gmail</a>' : ''}</div>
       <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>
       ${delHtml(t)}`, p => {
       p.querySelector('#close').onclick = closeSheet;
@@ -435,7 +443,7 @@
       if (!isStudent()) return;
       const setMail = () => {
         const txt = p.querySelector('#draft').textContent;
-        p.querySelector('#mail').href = `mailto:?subject=${encodeURIComponent('Could I come see you?')}&body=${encodeURIComponent(txt)}`;
+        p.querySelector('#mail').href = gmailHref('Could I come see you?', txt);
       };
       setMail();
       const wireSlots = () => p.querySelectorAll('.slot').forEach(b => b.onclick = () => {
@@ -589,11 +597,6 @@
 
     const visits = tasks.filter(t => t.type === 'visit' && t.status !== 'done' && t.doDay <= addDays(S.today, 3)).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
     section(right, 'Teacher visits', visits, { action: true }, 'No visits due in the next few days.');
-    const next = tasks.filter(t => (isWork(t) || t.type === 'quiz' || t.type === 'test') && OPEN.indexOf(t.status) >= 0 && t.due >= S.today).sort((a, b) => a.due < b.due ? -1 : 1)[0];
-    const h = document.createElement('h2'); h.textContent = 'Next due'; right.appendChild(h);
-    const card = document.createElement('div'); card.className = 'card';
-    card.innerHTML = next ? `<div class="countdown">${esc(countdown(next.due))}</div><div class="hint">${esc(cls(next).name)} · ${esc(next.title)}</div>` : '<div class="hint">Nothing due soon.</div>';
-    right.appendChild(card);
     const h2 = document.createElement('h2'); h2.textContent = 'Daily study'; right.appendChild(h2);
     const st = document.createElement('div'); st.className = 'study';
     STUDY.forEach((item, i) => {
@@ -607,13 +610,6 @@
   function orderOf(t) {
     try { const o = JSON.parse(localStorage.getItem('hp_order_' + S.today) || '[]'); const i = o.indexOf(String(t.id)); return i < 0 ? 999 : i; } catch (e) { return 999; }
   }
-  function countdown(due) {
-    const ms = new Date(due + 'T08:00:00') - new Date();
-    if (ms <= 0) return 'Due today';
-    const h = Math.floor(ms / 36e5), d = Math.floor(h / 24);
-    return d ? `${d} day${d > 1 ? 's' : ''} ${h % 24} hr` : `${h} hr`;
-  }
-
   function renderWeek(v) {
     const mon = addDays(sundayOf(S.today), weekOffset * 7);
     const nav = document.createElement('div'); nav.className = 'weeknav';
@@ -707,7 +703,7 @@
       <div id="bv-rest" hidden>
         <label class="field">What do you want to go over?<input id="bv-what" maxlength="120" placeholder="the Unit 4 quiz, my missing work…"></label>
         <div class="email" id="bv-draft"></div>
-        <div class="row"><button class="act" id="bv-copy">Copy email</button><a class="act" id="bv-mail" href="#" target="_blank" rel="noopener">Open in email</a></div>
+        <div class="row"><button class="act" id="bv-copy">Copy email</button><a class="act" id="bv-mail" href="#" ${MAIL_TARGET}>Open in Gmail</a></div>
         <div class="row"><button class="act primary" id="bv-add">Add visit to my plan</button></div>
       </div>`;
     v.appendChild(card);
@@ -717,7 +713,7 @@
       const what = card.querySelector('#bv-what').value.trim() || 'how I am doing in class';
       const txt = `Hi ${teacher},\n\nCould I come see you ${/^(Tutorial|Activities|6th)/.test(slot) ? 'during ' + slot.replace(/ \d.*$/, '').toLowerCase() : 'at a time that works for you'} on ${nice(day)}? I'd like to go over ${what}.\n\nThank you,\n${S.studentName || ''}`;
       card.querySelector('#bv-draft').textContent = txt;
-      card.querySelector('#bv-mail').href = `mailto:?subject=${encodeURIComponent('Could I come see you?')}&body=${encodeURIComponent(txt)}`;
+      card.querySelector('#bv-mail').href = gmailHref('Could I come see you?', txt);
     };
     const showDay = d => {
       day = d; slot = '';
