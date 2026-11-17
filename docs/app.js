@@ -34,6 +34,7 @@
   let view = 'today';
   let weekOffset = 0;
   let classTab = 'Chem';
+  let todayVisitCls = '';
   let undoFn = null;
   let askedSlip = {};
 
@@ -435,7 +436,7 @@
       ${isStudent() ? `${showPicker ? '<h4 class="sub">Suggested</h4>' : ''}<div class="slots">${opts.map(([d, s]) => slotBtn(d, s, `${s} · ${short(d)}`)).join('')}</div>` : ''}
       ${showPicker ? `<h4 class="sub">Or pick a day</h4>${pickerHtml(days, pickSel)}<div id="dayinfo"></div>` : ''}
       <div class="email" id="draft">${esc(draftFor(t.doDay, chosen || (opts[0] || [])[1] || ''))}</div>
-      <div class="row">${isStudent() ? '<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" ${MAIL_TARGET}>Open in Gmail</a>' : ''}</div>
+      <div class="row">${isStudent() ? `<button class="act" id="copy">Copy email</button><a class="act" id="mail" href="#" ${MAIL_TARGET}>Open in Gmail</a>` : ''}</div>
       <div class="row">${isStudent() && t.status !== 'done' ? '<button class="act primary" id="went">I went</button>' : ''}<button class="act" id="close">Close</button></div>
       ${delHtml(t)}`, p => {
       p.querySelector('#close').onclick = closeSheet;
@@ -595,8 +596,9 @@
       } });
     }
 
-    const visits = tasks.filter(t => t.type === 'visit' && t.status !== 'done' && t.doDay <= addDays(S.today, 3)).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
-    section(right, 'Teacher visits', visits, { action: true }, 'No visits due in the next few days.');
+    const visits = tasks.filter(t => t.type === 'visit' && t.status !== 'done' && t.visitSlot && t.doDay === S.today);
+    section(right, "Today's teacher visits", visits, { action: true }, 'No teacher visits booked for today.');
+    if (isStudent()) bookVisitCard(right, todayVisitCls, true);
     const h2 = document.createElement('h2'); h2.textContent = 'Daily study'; right.appendChild(h2);
     const st = document.createElement('div'); st.className = 'study';
     STUDY.forEach((item, i) => {
@@ -690,12 +692,26 @@
   }
 
   // Classes page: book a visit with this class's teacher. Pick a day, see its schedule, pick a time, add it.
-  function bookVisitCard(v, k) {
+  // pickClass: the Today page version, where he chooses the class first. It also lists visits
+  // the app planned (before a quiz or test, the weekly one) that still need a time.
+  function bookVisitCard(v, k, pickClass) {
     const teacher = (S.teachers || {})[k] || 'your teacher';
+    if (pickClass) {
+      const due = S.tasks.filter(t => t.type === 'visit' && t.status !== 'done' && !t.visitSlot && t.doDay >= S.today).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
+      const box = document.createElement('div'); box.className = 'card bookv';
+      box.innerHTML = `<h3>Schedule a teacher visit</h3>
+        ${due.length ? `<div class="hint">Needs a time:</div><div class="slots">${due.map(t => `<button class="slot" data-id="${esc(t.id)}">${esc(t.title.replace(/^See /, ''))} · by ${esc(short(t.doDay))}</button>`).join('')}</div>` : ''}
+        <label class="field">Class<select id="bv-cls"><option value="">Pick a class</option>${Object.keys(CLASSES).map(c => `<option value="${c}" ${c === k ? 'selected' : ''}>${esc(CLASSES[c].name)} · ${esc((S.teachers || {})[c] || '')}</option>`).join('')}</select></label>`;
+      v.appendChild(box);
+      box.querySelectorAll('.slot[data-id]').forEach(b => b.onclick = () => visitSheet(T(b.dataset.id)));
+      box.querySelector('#bv-cls').onchange = e => { todayVisitCls = e.target.value; render(); };
+      if (!k) return;
+      v = box;
+    }
     const days = Object.keys(S.school || {}).filter(d => d >= S.today && d <= addDays(S.today, 21) && canVisit(S.school[d])).sort();
     const booked = S.tasks.filter(t => t.type === 'visit' && t.cls === k && t.status !== 'done' && t.visitSlot && t.doDay >= S.today).sort((a, b) => a.doDay < b.doDay ? -1 : 1);
-    const card = document.createElement('div'); card.className = 'card bookv';
-    card.innerHTML = `<h3>See ${esc(teacher)}</h3>
+    const card = document.createElement('div'); card.className = pickClass ? 'bookv-in' : 'card bookv';
+    card.innerHTML = `${pickClass ? '' : `<h3>See ${esc(teacher)}</h3>`}
       <div class="hint">Book a one-on-one visit. Pick a day, then a time.</div>
       ${booked.length ? `<div class="hint">Already booked: ${booked.map(t => esc(t.visitSlot.replace(/ \(.*\)$/, '') + ' · ' + short(t.doDay))).join(', ')}</div>` : ''}
       ${days.length ? pickerHtml(days, '') : '<div class="hint">No school days with tutorial, activities or 6th period in the next three weeks.</div>'}

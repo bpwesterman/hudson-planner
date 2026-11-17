@@ -130,6 +130,7 @@ body{padding-top:env(safe-area-inset-top,0px)}
   .c-main{order:1}.c-side{order:2}.c-recent{order:3}
 }
 .bookv{gap:8px;padding:12px}
+.bookv-in{display:flex;flex-direction:column;gap:8px}
 .bookv h3{font-size:16px}
 .bookv .dpick{gap:4px}
 .bookv .pday{min-height:40px;font-size:13px;border-radius:8px;padding:2px}
