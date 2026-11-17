@@ -58,6 +58,8 @@
     return a.ap === b.ap ? `${a.t}–${b.t} ${b.ap}` : `${a.t} ${a.ap}–${b.t} ${b.ap}`;
   };
   const mondayOf = s => addDays(s, -((wd(s) + 6) % 7));
+  // Calendars show weeks Sunday to Saturday.
+  const sundayOf = s => addDays(s, -wd(s));
 
   /* ---------------- auth ---------------- */
   function loadToken() {
@@ -396,9 +398,9 @@
   }
   function pickerHtml(days, sel) {
     const ok = {}; days.forEach(d => { ok[d] = true; });
-    let html = '<div class="dpick" role="group" aria-label="Pick a day">' + WD2.slice(1, 6).map(w => `<div class="dh">${w}</div>`).join('');
-    for (let wk = mondayOf(S.today); wk <= days[days.length - 1]; wk = addDays(wk, 7)) {
-      for (let i = 0; i < 5; i++) {
+    let html = '<div class="dpick" role="group" aria-label="Pick a day">' + WD2.map(w => `<div class="dh">${w}</div>`).join('');
+    for (let wk = sundayOf(S.today); wk <= days[days.length - 1]; wk = addDays(wk, 7)) {
+      for (let i = 0; i < 7; i++) {
         const d = addDays(wk, i);
         const label = `<span>${MONTHS[+d.slice(5, 7) - 1]}</span>${+d.slice(8)}`;
         html += ok[d] ? `<button class="pday" data-d="${d}" aria-pressed="${d === sel}">${label}</button>` : `<div class="pday off" aria-hidden="true">${label}</div>`;
@@ -613,7 +615,7 @@
   }
 
   function renderWeek(v) {
-    const mon = addDays(mondayOf(S.today), weekOffset * 7);
+    const mon = addDays(sundayOf(S.today), weekOffset * 7);
     const nav = document.createElement('div'); nav.className = 'weeknav';
     nav.innerHTML = `<button class="act" id="wprev" aria-label="Previous week">‹</button><strong>Week of ${esc(nice(mon))}</strong><button class="act" id="wnext" aria-label="Next week">›</button>`;
     v.appendChild(nav);
@@ -769,8 +771,8 @@
       const f = first.toISOString().slice(0, 10);
       const cap = document.createElement('div'); cap.className = 'hint'; cap.textContent = MONTHS[first.getUTCMonth()] + ' ' + first.getUTCFullYear(); v.appendChild(cap);
       const grid = document.createElement('div'); grid.className = 'month';
-      grid.innerHTML = [1, 2, 3, 4, 5, 6, 0].map(i => `<div class="dh">${WD2[i]}</div>`).join('');
-      let d = mondayOf(f);
+      grid.innerHTML = WD2.map(w => `<div class="dh">${w}</div>`).join('');
+      let d = sundayOf(f);
       for (let i = 0; i < 42; i++, d = addDays(d, 1)) {
         if (i === 35 && d.slice(0, 7) !== f.slice(0, 7)) break;
         const evs = S.tasks.filter(t => t.due === d && (t.type === 'quiz' || t.type === 'test' || /project|essay|paper|exam/i.test(t.title)));
