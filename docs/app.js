@@ -22,6 +22,8 @@
   const MINUTES = [['15 min', 15], ['30 min', 30], ['1 hr', 60], ['2+ hr', 120]];
   const STUDY = ['15 min Spanish', '15 min History or Membean', '15 min for the next test'];
   const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // Short day labels for calendar grids and headers.
+  const WD2 = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   const $ = s => document.querySelector(s);
@@ -394,7 +396,7 @@
   }
   function pickerHtml(days, sel) {
     const ok = {}; days.forEach(d => { ok[d] = true; });
-    let html = '<div class="dpick" role="group" aria-label="Pick a day">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(w => `<div class="dh">${w}</div>`).join('');
+    let html = '<div class="dpick" role="group" aria-label="Pick a day">' + WD2.slice(1, 6).map(w => `<div class="dh">${w}</div>`).join('');
     for (let wk = mondayOf(S.today); wk <= days[days.length - 1]; wk = addDays(wk, 7)) {
       for (let i = 0; i < 5; i++) {
         const d = addDays(wk, i);
@@ -626,7 +628,7 @@
       const col = document.createElement('div');
       col.className = 'col' + (shortDay ? ' short' : '');
       const pins = S.tasks.filter(t => ((t.type === 'quiz' || t.type === 'test') && t.due === d) || (t.type === 'visit' && t.doDay === d && t.status !== 'done'));
-      col.innerHTML = `<header><strong>${WD[wd(d)]}${d === S.today ? ' · today' : ''}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code || 'Day ' + info.day) : ''}${shortDay ? ' · short' : ''}</span></header>` +
+      col.innerHTML = `<header><strong>${WD2[wd(d)]}${d === S.today ? ' · today' : ''}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code || 'Day ' + info.day) : ''}${shortDay ? ' · short' : ''}</span></header>` +
         pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
       col.innerHTML += ((S.busy || {})[d] || []).map(e => `<div class="cev${e.cal ? ' fam' : ''}">${e.all ? '' : `<b>${esc(clock(e.s, e.e))}</b> `}${esc(e.t)}</div>`).join('');
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
@@ -767,7 +769,7 @@
       const f = first.toISOString().slice(0, 10);
       const cap = document.createElement('div'); cap.className = 'hint'; cap.textContent = MONTHS[first.getUTCMonth()] + ' ' + first.getUTCFullYear(); v.appendChild(cap);
       const grid = document.createElement('div'); grid.className = 'month';
-      grid.innerHTML = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<div class="dh">${x}</div>`).join('');
+      grid.innerHTML = [1, 2, 3, 4, 5, 6, 0].map(i => `<div class="dh">${WD2[i]}</div>`).join('');
       let d = mondayOf(f);
       for (let i = 0; i < 42; i++, d = addDays(d, 1)) {
         if (i === 35 && d.slice(0, 7) !== f.slice(0, 7)) break;
