@@ -982,6 +982,19 @@
 
   /* ---------------- boot ---------------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // New version check: when the app comes back on screen (switching back to the tab or reopening
+  // the phone app), ask GitHub whether app.js or styles.css changed. If so, reload once so new
+  // features show right away. Skipped while a pop-up is open so nothing typed is lost.
+  const verOf = () => Promise.all(['app.js', 'styles.css', 'index.html'].map(f => fetch(f, { method: 'HEAD', cache: 'no-store' })
+    .then(r => r.headers.get('etag') || r.headers.get('last-modified') || '').catch(() => ''))).then(v => v.join('|'));
+  let ver = null;
+  verOf().then(v => { ver = v; });
+  function checkVersion() {
+    if (!ver || !$('#sheet').hidden) return;
+    verOf().then(v => { if (v && v.replace(/\|/g, '') && v !== ver) location.reload(); });
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+  setInterval(() => { if (!document.hidden) checkVersion(); }, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && token) api('load').then(checkSlips).catch(() => {}); });
   if (!CFG.API_URL || !CFG.CLIENT_ID) {
     showSignin('Setup is not finished: add the API URL and client ID to config.js.');
