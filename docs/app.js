@@ -507,7 +507,7 @@
 
   /* ---------------- rendering ---------------- */
   function tabsFor() {
-    const t = [['today', 'Today'], ['week', 'Week'], ['status', 'Status'], ['classes', 'Classes'], ['tests', 'Tests & visits'], ['missing', 'Missing']];
+    const t = [['today', 'Today'], ['week', 'Week'], ['status', 'Status'], ['classes', 'Classes'], ['tests', 'Tests & visits'], ['missing', 'Missing'], ['archive', 'Archive']];
     if (S.role === 'parent') t.unshift(['parent', 'Parent view']);
     return t;
   }
@@ -528,7 +528,7 @@
     $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
     const v = $('#view');
     v.innerHTML = '';
-    ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, parent: renderParent }[view] || renderToday)(v);
+    ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, archive: renderArchive, parent: renderParent }[view] || renderToday)(v);
   }
 
   function section(parent, title, items, opts, emptyText) {
@@ -896,6 +896,133 @@
     const note = document.createElement('p'); note.className = 'hint';
     note.textContent = 'Algebra takes late work for partial credit. Chemistry takes it until the end of the unit. Check Veracross for anything showing 0 or "Not Turned In".';
     v.appendChild(note);
+  }
+
+  /* ---------------- archive ---------------- */
+  // Every assignment ever kept, searchable. Data loads on first use and is kept for a minute.
+  const ARC = { data: null, at: 0, loading: null, q: '', cls: '', status: '', type: '', from: '', to: '' };
+  const ARC_STATUS = [['', 'Any status'], ['todo', 'Not started'], ['doing', 'In progress'], ['done', 'Done'], ['in', 'Turned in'], ['missing', 'Missing'], ['slipped', 'Missed a plan'], ['gradebook', 'Gradebook flag']];
+  const ARC_TYPES = [['', 'Any kind'], ['assignment', 'Assignments'], ['test', 'Tests'], ['quiz', 'Quizzes'], ['study', 'Study sessions'], ['visit', 'Teacher visits'], ['other', 'Other']];
+  const STATUS_LABEL = { todo: 'Not started', doing: 'In progress', done: 'Done', in: 'Turned in', graded: 'Graded', suggested: 'Suggested' };
+  const SOURCE_LABEL = { feed: 'Class calendar', manual: 'Added by hand', parent: 'Suggested by a parent', auto: 'Added by the planner' };
+  function loadArchive() {
+    if (ARC.data && Date.now() - ARC.at < 60000) return Promise.resolve(ARC.data);
+    if (!ARC.loading) {
+      ARC.loading = send('archive').then(d => { ARC.data = d; ARC.at = Date.now(); ARC.loading = null; return d; }, e => { ARC.loading = null; throw e; });
+    }
+    return ARC.loading;
+  }
+  const arcActive = () => !!(ARC.q.trim() || ARC.cls || ARC.status || ARC.type || ARC.from || ARC.to);
+  function arcText(t) {
+    const h = ((ARC.data.history || {})[t.id] || []).map(x => x.event).join(' ');
+    return [t.title, cls(t).name, t.note, t.slipReason, t.conflict, t.confirmedGrade, t.confirmedNote, STATUS_LABEL[t.status], kindOf(t), h].join(' ').toLowerCase();
+  }
+  function arcMatch(t) {
+    if (ARC.cls && t.cls !== ARC.cls) return false;
+    if (ARC.type === 'other' ? ['assignment', 'test', 'quiz', 'study', 'visit'].indexOf(t.type) >= 0 : ARC.type && t.type !== ARC.type) return false;
+    if (ARC.from && t.due < ARC.from) return false;
+    if (ARC.to && t.due > ARC.to) return false;
+    const st = ARC.status;
+    if (st === 'missing' && !missing(t)) return false;
+    if (st === 'slipped' && !t.slipReason && !((ARC.data.history || {})[t.id] || []).some(x => /^Missed the plan/.test(x.event))) return false;
+    if (st === 'gradebook' && !t.conflictState) return false;
+    if (st === 'done' && t.status !== 'done') return false;
+    if (st === 'in' && ['in', 'graded'].indexOf(t.status) < 0) return false;
+    if ((st === 'todo' || st === 'doing') && t.status !== st) return false;
+    const words = ARC.q.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    // Each typed word has to start a word in the assignment (so "ch" finds "Chem", not "History").
+    if (words.length) { const ws = arcText(t).split(/[^a-z0-9]+/); if (!words.every(w => ws.some(x => x.indexOf(w) === 0))) return false; }
+    return true;
+  }
+  function renderArchive(v) {
+    const box = document.createElement('div'); box.className = 'arch';
+    box.innerHTML = `
+      <input type="search" id="arc-q" placeholder="Search assignments: title, class, note…" value="${esc(ARC.q)}" aria-label="Search the archive">
+      <div class="arch-f">
+        <label class="field">Class<select id="arc-cls"><option value="">Any class</option>${Object.keys(CLASSES).map(k => `<option value="${k}" ${ARC.cls === k ? 'selected' : ''}>${esc(CLASSES[k].name)}</option>`).join('')}</select></label>
+        <label class="field">Status<select id="arc-status">${ARC_STATUS.map(([k, l]) => `<option value="${k}" ${ARC.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field">Kind<select id="arc-type">${ARC_TYPES.map(([k, l]) => `<option value="${k}" ${ARC.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field">Due from<input type="date" id="arc-from" value="${esc(ARC.from)}"></label>
+        <label class="field">Due to<input type="date" id="arc-to" value="${esc(ARC.to)}"></label>
+      </div>
+      <p class="hint" id="arc-help">Type a word from the assignment's title or note, or pick a class, status, kind or due date range. Matching assignments, past and current, show up below. Tap one to see its whole story.</p>
+      <div class="list" id="arc-res"></div>`;
+    v.appendChild(box);
+    const res = box.querySelector('#arc-res');
+    const draw = () => {
+      if (!arcActive()) { res.innerHTML = ''; return; }
+      if (!ARC.data) {
+        res.innerHTML = '<div class="empty">Loading the archive…</div>';
+        loadArchive().then(() => { if (view === 'archive') draw(); }, () => { res.innerHTML = '<div class="empty">Could not load the archive. Try again in a moment.</div>'; });
+        return;
+      }
+      const hits = (ARC.data.archive || []).filter(t => t.status !== 'suggested' || !isStudent()).filter(arcMatch).sort((a, b) => a.due > b.due ? -1 : a.due < b.due ? 1 : 0);
+      res.innerHTML = `<div class="hint">${hits.length} found${hits.length > 200 ? ', showing the first 200' : ''}</div>`;
+      hits.slice(0, 200).forEach(t => {
+        const b = document.createElement('button'); b.className = 'arow'; b.style.setProperty('--c', cls(t).color);
+        const stTag = missing(t) ? '<span class="tag bad">Missing</span>' : `<span class="tag${finished(t) ? ' good' : ''}">${esc(STATUS_LABEL[t.status] || t.status)}</span>`;
+        b.innerHTML = `<span class="t">${esc(t.title)}</span><span class="meta">${cls(t).name ? `<span class="tag">${esc(cls(t).name)}</span>` : ''}<span>${esc(kindOf(t) === 'Due' ? 'Due' : kindOf(t))} ${esc(nice(t.due))}</span>${stTag}${t.slipReason ? '<span class="tag warn">Missed plan</span>' : ''}${t.conflictState ? '<span class="tag bad">Gradebook</span>' : ''}</span>`;
+        b.onclick = () => storySheet(t);
+        res.appendChild(b);
+      });
+      if (!hits.length) res.innerHTML = '<div class="empty">Nothing matches. Try fewer words or clear a filter.</div>';
+    };
+    const bind = (id, key, ev) => box.querySelector(id).addEventListener(ev || 'change', e => { ARC[key] = e.target.value; draw(); });
+    bind('#arc-q', 'q', 'input'); bind('#arc-cls', 'cls'); bind('#arc-status', 'status'); bind('#arc-type', 'type'); bind('#arc-from', 'from'); bind('#arc-to', 'to');
+    loadArchive().catch(() => {});
+    draw();
+  }
+  const stamp = s => {
+    s = String(s || '');
+    if (!s) return '';
+    const d = s.slice(0, 10), tm = s.slice(11, 16);
+    return `${nice(d)}${tm ? ', ' + clock(tm) : ''}`;
+  };
+  // The story of one task: read-only details, then everything that happened to it in time order.
+  function storySheet(t) {
+    const hist = ((ARC.data && ARC.data.history) || {})[t.id] || [];
+    const pts = ((ARC.data && ARC.data.points) || {})[t.id] || [];
+    const has = re => hist.some(h => re.test(h.event));
+    const ev = hist.map(h => ({ at: String(h.at), who: h.who, text: h.event }));
+    // Older tasks were kept before the history log existed, so fill in from their saved dates.
+    if (t.createdAt && !has(/^(Posted|Added|Suggested)/)) ev.push({ at: t.createdAt, who: '', text: SOURCE_LABEL[t.source] ? `${SOURCE_LABEL[t.source]}: added to the planner` : 'Added to the planner' });
+    if (t.doneAt && !has(/^Marked (Done|Turned in)/)) ev.push({ at: t.doneAt, who: '', text: 'Marked Done' });
+    if (t.turnedInAt && !has(/^Marked Turned in/)) ev.push({ at: t.turnedInAt, who: '', text: 'Marked Turned in' });
+    if (t.slipDate && t.slipReason && !has(/^Missed the plan/)) ev.push({ at: t.slipDate, who: '', text: `Missed the plan. Reason: ${t.slipReason}` });
+    if (t.conflictAt && !has(/^Gradebook says/)) ev.push({ at: t.conflictAt, who: 'Gradebook check', text: `Gradebook says ${t.conflict}` });
+    if (t.confirmedAt && !has(/^Parent confirmed/)) ev.push({ at: t.confirmedAt, who: 'Parent', text: `Parent confirmed the grade: ${t.confirmedGrade || '(none)'}${t.confirmedNote ? '. Note: ' + t.confirmedNote : ''}` });
+    pts.forEach(p => ev.push({ at: String(p.date), who: '', text: `${+p.points > 0 ? '+' : ''}${p.points} points: ${p.reason}`, pts: true }));
+    const key = e => e.at.length > 10 ? e.at : e.at + 'T99'; // date-only entries go at the end of their day
+    ev.sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+    const all = (ARC.data && ARC.data.archive) || S.tasks;
+    const related = all.filter(x => x.id !== t.id && (x.visitFor === t.id || x.id === t.visitFor || String(x.sourceId).indexOf('study|' + t.id + '|') === 0
+      || (t.sourceId && String(t.sourceId).indexOf('study|') === 0 && String(t.sourceId).split('|')[1] === x.id)));
+    const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+    sheet(`
+      <h3>${esc(t.title)}</h3>
+      <dl class="facts">
+        ${row('Class', esc(cls(t).name || 'None'))}
+        ${row('Kind', esc(kindOf(t) === 'Due' ? (t.type === 'study' ? 'Study session' : t.type === 'visit' ? 'Teacher visit' : 'Assignment') : kindOf(t)))}
+        ${row('Due', esc(nice(t.due)))}
+        ${row('Planned for', esc(nice(t.doDay)))}
+        ${row('Status', esc(missing(t) ? 'Missing' : (STATUS_LABEL[t.status] || t.status)))}
+        ${row('Done', esc(stamp(t.doneAt)))}
+        ${row('Turned in', esc(stamp(t.turnedInAt)))}
+        ${row('Time it took', t.minutes ? (t.minutes >= 120 ? '2+ hours' : t.minutes + ' min') : '')}
+        ${row('Paper', t.paper ? 'Paper to hand in' : '')}
+        ${row('Turn in', t.noTurnIn ? 'Nothing to turn in' : '')}
+        ${row('Visit time', esc(t.visitSlot))}
+        ${row('Came from', esc(SOURCE_LABEL[t.source] || ''))}
+        ${row('Gradebook', t.conflict ? esc(`Said ${t.conflict}`) + (t.confirmedGrade || t.confirmedNote ? esc(` · Confirmed grade ${t.confirmedGrade || '—'}${t.confirmedNote ? ': ' + t.confirmedNote : ''}`) : '') : '')}
+        ${row('Note', esc(t.note))}
+      </dl>
+      <h4>What happened</h4>
+      <ol class="story">${ev.length ? ev.map(e => `<li class="${e.pts ? 'pts' : ''}"><span class="when">${esc(stamp(e.at))}${e.who ? ' · ' + esc(e.who) : ''}</span>${esc(e.text)}</li>`).join('') : '<li>No history recorded yet.</li>'}</ol>
+      ${related.length ? `<h4>Linked</h4><div class="list">${related.map(x => `<button class="arow" data-rel="${esc(x.id)}" style="--c:${cls(x).color}"><span class="t">${esc(x.title)}</span><span class="meta"><span>${esc(nice(x.doDay || x.due))}</span><span class="tag${finished(x) || (x.type !== 'assignment' && x.status === 'done') ? ' good' : ''}">${esc(STATUS_LABEL[x.status] || x.status)}</span></span></button>`).join('')}</div>` : ''}
+      <div class="row"><button class="act" id="s-close">Close</button></div>`, p => {
+      p.querySelector('#s-close').onclick = closeSheet;
+      p.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => { const x = all.find(y => y.id === b.dataset.rel); if (x) storySheet(x); });
+    });
   }
 
   function renderParent(v) {
