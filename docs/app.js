@@ -824,6 +824,13 @@
     };
   }
 
+  // What a calendar item is: Test, Quiz, Exam, Essay, Project or Paper.
+  function kindOf(t) {
+    if (t.type === 'test') return /exam/i.test(t.title) ? 'Exam' : 'Test';
+    if (t.type === 'quiz') return 'Quiz';
+    const m = String(t.title).match(/exam|essay|project|paper/i);
+    return m ? m[0].charAt(0).toUpperCase() + m[0].slice(1).toLowerCase() : 'Due';
+  }
   function renderTests(v) {
     const tests = S.tasks.filter(t => (t.type === 'quiz' || t.type === 'test') && t.due >= S.today).sort((a, b) => a.due < b.due ? -1 : 1);
     const h = document.createElement('h2'); h.textContent = 'Quizzes and tests'; v.appendChild(h);
@@ -854,8 +861,9 @@
       for (let i = 0; i < 42; i++, d = addDays(d, 1)) {
         if (i === 35 && d.slice(0, 7) !== f.slice(0, 7)) break;
         const evs = S.tasks.filter(t => t.due === d && (t.type === 'quiz' || t.type === 'test' || /project|essay|paper|exam/i.test(t.title)));
-        grid.insertAdjacentHTML('beforeend', `<div class="cell${d.slice(0, 7) !== f.slice(0, 7) ? ' out' : ''}${d === S.today ? ' today' : ''}"><span>${+d.slice(8)}</span>${evs.map(t => `<span class="ev" style="--c:${cls(t).color}" title="${esc(t.title)}">${esc(cls(t).name || t.title)}</span>`).join('')}</div>`);
+        grid.insertAdjacentHTML('beforeend', `<div class="cell${d.slice(0, 7) !== f.slice(0, 7) ? ' out' : ''}${d === S.today ? ' today' : ''}"><span>${+d.slice(8)}</span>${evs.map(t => `<button class="ev" data-id="${esc(t.id)}" style="--c:${cls(t).color}" title="${esc(kindOf(t) + ': ' + t.title)}">${esc(kindOf(t))}${cls(t).name ? ' · ' + esc(cls(t).name) : ''}</button>`).join('')}</div>`);
       }
+      grid.querySelectorAll('.ev[data-id]').forEach(b => b.onclick = () => detailSheet(T(b.dataset.id)));
       v.appendChild(grid);
     });
   }
