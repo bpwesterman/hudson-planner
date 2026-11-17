@@ -21,6 +21,7 @@ const SHEETS = {
   Points: ['date', 'points', 'reason', 'taskId'],
   Study: ['date', 'item', 'done'],
   Grades: ['pastedAt', 'by', 'text'],
+  History: ['at', 'taskId', 'who', 'event'],
 };
 
 /* ------------------------------------------------------------------ setup */
@@ -143,6 +144,32 @@ function writeTasks(tasks) {
     sh.getRange(2, 1, rows.length, FIELDS.length).setNumberFormat('@').setValues(rows);
   }
 }
+
+/* History: one row per thing that happens to a task, for the Archive's story view.
+   Events are collected while a request runs and written in one go at the end. */
+let PENDING_LOG = [];
+function logEvent(t, who, event) {
+  if (!t) return;
+  PENDING_LOG.push({ at: nowStamp(), taskId: t.id, who: who || '', event: String(event).slice(0, 300) });
+}
+function flushLog() {
+  if (!PENDING_LOG.length) return;
+  const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SHEET_ID'));
+  let sh = ss.getSheetByName('History');
+  if (!sh) {
+    sh = ss.insertSheet('History');
+    sh.getRange(1, 1, 1, SHEETS.History.length).setValues([SHEETS.History]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  const rows = PENDING_LOG.map(o => SHEETS.History.map(h => o[h] === undefined ? '' : o[h]));
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length).setNumberFormat('@').setValues(rows);
+  PENDING_LOG = [];
+}
+function readHistory() {
+  const ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SHEET_ID'));
+  return ss.getSheetByName('History') ? readRows('History') : [];
+}
+const STATUS_NAMES = { todo: 'Not started', doing: 'In progress', done: 'Done', in: 'Turned in', graded: 'Graded', suggested: 'Suggested' };
 
 function appendRow(name, obj) {
   sheet(name).appendRow(SHEETS[name].map(h => obj[h] === undefined ? '' : obj[h]));
@@ -478,6 +505,7 @@ function checkGradebook(text, tasks) {
         t.conflict = problem;
         t.conflictState = 'open';
         t.conflictAt = nowStamp();
+        logEvent(t, 'Gradebook check', 'Gradebook says ' + problem + ' (marked turned in)');
         t.gradebookItem = it.name + ' (' + it.date + ')';
         t.updatedAt = nowStamp();
         res.newConflicts++;
@@ -540,6 +568,7 @@ function syncAll() {
         if (existing) {
           if (existing.title !== title) { existing.title = title; existing.updatedAt = nowStamp(); }
           if (existing.due !== due) {
+            logEvent(existing, 'Class calendar', 'Due date changed from ' + existing.due + ' to ' + due);
             existing.due = due;
             existing.sourceId = sid;
             if (!existing.pinned && OPEN.indexOf(existing.status) >= 0) existing.doDay = suggestDoDay(due, ctx);
@@ -552,6 +581,7 @@ function syncAll() {
           doDay: type === 'assignment' ? suggestDoDay(due, ctx) : due });
         tasks.push(t);
         bySource[sid] = t;
+        logEvent(t, 'Class calendar', 'Posted on the class calendar, due ' + due);
       });
     });
 
@@ -575,6 +605,7 @@ function syncAll() {
     recurring(tasks, ctx);
     dropDeleted(tasks);
     writeTasks(tasks);
+    flushLog();
     props.setProperty('INITIALIZED', '1');
     props.setProperty('LAST_SYNC', nowStamp());
     refreshReminders(tasks, ctx);
@@ -797,6 +828,7 @@ function handle(req, who) {
   const today = todayStr();
   if (req.action === 'load') return loadAll(who);
   if (req.action === 'sync') { syncAll(); return loadAll(who); }
+  if (req.action === 'archive') return archiveData();
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -824,6 +856,7 @@ function handle(req, who) {
       }
       t.updatedAt = nowStamp();
       gained = applyPoints(before, t);
+      logSave(before, t, who);
       if (t.type === 'visit' && (t.visitSlot !== before.visitSlot || t.doDay !== before.doDay || t.status !== before.status)) syncVisitEvent(t, before.doDay);
     } else if (req.action === 'add') {
       const ctx = context(tasks);
@@ -843,11 +876,13 @@ function handle(req, who) {
         syncVisitEvent(t);
       }
       tasks.push(t);
+      logEvent(t, whoName(who), isParent ? 'Suggested by a parent, due ' + due : 'Added by hand, due ' + due);
       if (!isParent) ensureExtras(t, tasks, ctx, CONFIG.TEACHERS || {});
     } else if (req.action === 'accept') {
       const t = byId[String(req.id)];
       if (!t || who.role !== 'student') throw new Error('Not allowed');
       if (req.accept) {
+        logEvent(t, whoName(who), 'Accepted the parent suggestion');
         t.status = 'todo';
         const ctx = context(tasks);
         t.doDay = t.type === 'assignment' ? suggestDoDay(t.due, ctx) : t.due;
@@ -860,9 +895,11 @@ function handle(req, who) {
       if (!t || who.role !== 'student') throw new Error('Not allowed');
       t.slipReason = String(req.reason || '').slice(0, 80);
       t.slipDate = today;
+      const missedDay = t.doDay;
       const ctx = context(tasks);
       t.doDay = t.due > today ? suggestDoDay(t.due, ctx) : today;
       if (t.doDay < today) t.doDay = today;
+      logEvent(t, whoName(who), 'Missed the plan for ' + missedDay + '. Reason: ' + t.slipReason + '. Moved to ' + t.doDay);
       t.pinned = false;
     } else if (req.action === 'reset') {
       if (who.role !== 'student') throw new Error('Not allowed');
@@ -870,6 +907,7 @@ function handle(req, who) {
         if (t.type === 'assignment' && !finished(t) && t.status !== 'suggested' && (t.doDay < today || t.due < today)) {
           t.fixit = true;
           t.doDay = today;
+          logEvent(t, whoName(who), 'Moved to the fix-it list');
         }
       });
     } else if (req.action === 'absent') {
@@ -924,11 +962,13 @@ function handle(req, who) {
       t.confirmedNote = String(req.note || '').trim().slice(0, 500);
       t.confirmedAt = nowStamp();
       t.updatedAt = nowStamp();
+      logEvent(t, whoName(who), 'Parent confirmed the grade: ' + (t.confirmedGrade || '(none)') + (t.confirmedNote ? '. Note: ' + t.confirmedNote : ''));
     } else {
       throw new Error('Unknown action');
     }
 
     writeTasks(tasks);
+    flushLog();
     const res = loadAll(who, tasks);
     res.gained = gained;
     if (gradeResult) res.gradeResult = gradeResult;
@@ -936,6 +976,33 @@ function handle(req, who) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function whoName(who) {
+  return who.role === 'student' ? (CONFIG.STUDENT_NAME || 'Student') : 'Parent';
+}
+
+/** Records what changed when the student saves a task. */
+function logSave(before, t, who) {
+  const w = whoName(who);
+  if (t.status !== before.status) logEvent(t, w, 'Marked ' + (STATUS_NAMES[t.status] || t.status) + (before.status ? ' (was ' + (STATUS_NAMES[before.status] || before.status) + ')' : ''));
+  if (t.doDay !== before.doDay) logEvent(t, w, 'Plan moved from ' + (before.doDay || 'none') + ' to ' + (t.doDay || 'none'));
+  if (t.due !== before.due) logEvent(t, w, 'Due date changed from ' + before.due + ' to ' + t.due);
+  if (t.cls !== before.cls) logEvent(t, w, 'Class changed');
+  if (!!t.paper !== !!before.paper) logEvent(t, w, t.paper ? 'Marked as paper to hand in' : 'No longer paper to hand in');
+  if (!!t.noTurnIn !== !!before.noTurnIn) logEvent(t, w, t.noTurnIn ? 'Marked as nothing to turn in' : 'Marked as needing to be turned in');
+  if (t.minutes && t.minutes !== before.minutes) logEvent(t, w, 'Logged time: ' + (t.minutes >= 120 ? '2+ hours' : t.minutes + ' min'));
+  if (t.visitSlot !== before.visitSlot && t.visitSlot) logEvent(t, w, 'Visit booked: ' + t.visitSlot + ' on ' + t.doDay);
+  if ((t.note || '') !== (before.note || '')) logEvent(t, w, t.note ? 'Note: ' + t.note : 'Note removed');
+}
+
+/** Every task ever kept (deleted ones are gone), with its history and points, for the Archive tab. */
+function archiveData() {
+  const history = {};
+  readHistory().forEach(h => { (history[h.taskId] = history[h.taskId] || []).push({ at: h.at, who: h.who, event: h.event }); });
+  const points = {};
+  readRows('Points').forEach(p => { if (p.taskId) (points[p.taskId] = points[p.taskId] || []).push({ date: p.date, points: p.points, reason: p.reason }); });
+  return { archive: readTasks(), history: history, points: points };
 }
 
 function loadAll(who, tasksIn) {
