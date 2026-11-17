@@ -707,7 +707,7 @@
       const col = document.createElement('div');
       col.className = 'col' + (shortDay ? ' short' : '') + (d === S.today ? ' today' : '');
       const pins = S.tasks.filter(t => ((t.type === 'quiz' || t.type === 'test') && t.due === d) || (t.type === 'visit' && t.doDay === d && t.status !== 'done'));
-      col.innerHTML = `<header><strong>${WD2[wd(d)]}${d === S.today ? ' · today' : ''}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code ? info.code + (info.periods ? ' ' + info.periods : '') : 'Day ' + info.day) : ''}</span></header>` +
+      col.innerHTML = `<header><strong>${WD2[wd(d)]}</strong><span>${MONTHS[+d.slice(5, 7) - 1]} ${+d.slice(8)}${info ? ' · ' + esc(info.code ? info.code + (info.periods ? ' ' + info.periods : '') : 'Day ' + info.day) : ''}</span></header>` +
         pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
       col.innerHTML += ((S.busy || {})[d] || []).map(e => `<div class="cev${e.cal ? ' fam' : ''}">${e.all ? '' : `<b>${esc(clock(e.s, e.e))}</b> `}${esc(e.t)}</div>`).join('');
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
