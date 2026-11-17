@@ -69,6 +69,10 @@
     } catch (e) { /* storage blocked */ }
     return null;
   }
+  // First name from the Google sign-in, e.g. "Stephanie".
+  function signerName() {
+    try { return JSON.parse(decodeURIComponent(escape(atob(String(token || loadToken()).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))))).given_name || ''; } catch (e) { return ''; }
+  }
   function saveToken(jwt) {
     try {
       const p = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -515,7 +519,7 @@
   function render() {
     if (!S) return;
     const info = (S.school || {})[S.today];
-    $('#hello').textContent = S.role === 'parent' ? 'Parent view' : `Hey ${S.studentName || 'there'}`;
+    $('#hello').textContent = S.role === 'parent' ? `Parent view${signerName() ? ' – ' + signerName() : ''}` : `Hey ${S.studentName || 'there'}`;
     const shortToday = (S.short || {})[S.today];
     $('#dayline').textContent = `${nice(S.today)}${info ? ' · ' + info.title : ''}${shortToday ? ' · ' + shortToday.join(', ') : ''}`;
     $('#streak').textContent = S.streak || 0;
@@ -1025,14 +1029,34 @@
     });
   }
 
+  // Dismissing only hides the alert; the assignment itself is not changed. It is logged in the Archive.
+  function dismissSheet(f) {
+    sheet(`<h3>Dismiss this alert?</h3>
+      <div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span></div>
+      <div class="hint">It comes off Needs attention. Nothing else about the assignment changes, and the dismissal shows in its Archive story.</div>
+      <label class="field">Points to remove<input type="number" id="dpts" min="1" max="1000" step="1" inputmode="numeric" placeholder="e.g. 5"></label>
+      <div class="row"><button class="act primary" id="dpen">Remove points</button><button class="act" id="dfree">Dismiss without penalty</button></div>
+      <div class="row"><button class="act" id="dcancel">Cancel</button></div>`, p => {
+      p.querySelector('#dcancel').onclick = closeSheet;
+      const go = pts => { closeSheet(); api('dismiss', { key: f.key, points: pts }).then(() => toast(pts ? `Dismissed and removed ${pts} point${pts === 1 ? '' : 's'}` : 'Dismissed'), () => {}); };
+      p.querySelector('#dfree').onclick = () => go(0);
+      p.querySelector('#dpen').onclick = () => {
+        const n = Math.round(Number(p.querySelector('#dpts').value));
+        if (!(n >= 1 && n <= 1000)) { toast('Enter how many points to remove'); return; }
+        go(n);
+      };
+    });
+  }
+
   function renderParent(v) {
     const h = document.createElement('h2'); h.textContent = 'Needs attention'; v.appendChild(h);
     const flags = (S.flags || []).filter(f => f.kind !== 'Gradebook disagrees');
     const conflicts = openConflicts();
     if (conflicts.length) conflictList(v, conflicts);
     const fl = document.createElement('div'); fl.className = 'list';
-    fl.innerHTML = flags.length ? flags.map(f => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span></div>`).join('') : (conflicts.length ? '' : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>');
+    fl.innerHTML = flags.length ? flags.map((f, i) => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span>${f.key ? `<button class="act" data-dis="${i}">Dismiss</button>` : ''}</div>`).join('') : (conflicts.length ? '' : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>');
     v.appendChild(fl);
+    fl.querySelectorAll('[data-dis]').forEach(b => b.onclick = () => dismissSheet(flags[+b.dataset.dis]));
     const wk = mondayOf(S.today);
     const thisWeek = S.tasks.filter(t => t.type === 'assignment' && t.due >= wk && t.due < addDays(wk, 7));
     const ahead = thisWeek.filter(t => t.doDay && t.doDay < t.due).length;
