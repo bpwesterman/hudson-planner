@@ -716,7 +716,10 @@
         pins.map(t => `<div class="pin" style="--c:${cls(t).color}">${t.type === 'visit' ? 'Visit: ' + esc(t.title.replace(/^See /, '')) : (t.type === 'test' ? 'Test: ' : 'Quiz: ') + esc(cls(t).name || t.title)}</div>`).join('');
       col.innerHTML += ((S.busy || {})[d] || []).map(e => `<div class="cev${e.cal ? ' fam' : ''}">${e.all ? '' : `<b>${esc(clock(e.s, e.e))}</b> `}${esc(e.t)}</div>`).join('');
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.day = d;
-      S.tasks.filter(t => isWork(t) && t.doDay === d && !finished(t) && t.status !== 'suggested').forEach(t => drop.appendChild(taskEl(t)));
+      // Finished work stays where it was planned, shown softly checked off.
+      S.tasks.filter(t => isWork(t) && t.doDay === d && t.status !== 'suggested')
+        .sort((a, b) => finished(a) - finished(b))
+        .forEach(t => { const el = taskEl(t); if (finished(t) || (t.status === 'done' && t.type !== 'assignment')) el.classList.add('wdone'); drop.appendChild(el); });
       col.appendChild(drop);
       board.appendChild(col);
       if (isStudent() && window.Sortable) {
@@ -734,9 +737,14 @@
     const board = document.createElement('div'); board.className = 'board';
     const live = S.tasks.filter(t => isWork(t) && (t.due >= addDays(S.today, -14) || OPEN.indexOf(t.status) >= 0 || t.status === 'done'));
     STATUS.forEach(([k, l]) => {
-      const items = live.filter(t => t.status === k).sort((a, b) => a.due < b.due ? -1 : 1);
+      // Turned in: the 10 most recently turned in, newest first. The Archive has the rest.
+      const items = k === 'in'
+        ? S.tasks.filter(t => isWork(t) && t.status === 'in').sort((a, b) => String(a.turnedInAt) < String(b.turnedInAt) ? 1 : -1).slice(0, 10)
+        : live.filter(t => t.status === k).sort((a, b) => a.due < b.due ? -1 : 1);
       const col = document.createElement('div'); col.className = 'col';
-      col.innerHTML = `<header><strong>${l}</strong><span>${items.length}</span></header>`;
+      col.innerHTML = `<header><strong>${l}${k === 'in' ? ' <button class="mini" data-arc>Archive</button>' : ''}</strong><span>${k === 'in' ? 'latest ' + items.length : items.length}</span></header>`;
+      const arc = col.querySelector('[data-arc]');
+      if (arc) arc.onclick = () => { view = 'archive'; render(); window.scrollTo(0, 0); };
       const drop = document.createElement('div'); drop.className = 'drop'; drop.dataset.s = k;
       items.forEach(t => drop.appendChild(taskEl(t)));
       col.appendChild(drop); board.appendChild(col);
