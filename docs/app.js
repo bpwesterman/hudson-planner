@@ -527,7 +527,7 @@
     document.querySelectorAll('.points .pill').forEach(b => { b.onclick = () => { view = 'rewards'; render(); window.scrollTo(0, 0); }; b.setAttribute('aria-pressed', view === 'rewards'); });
     $('#quickadd').placeholder = S.role === 'parent' ? 'Suggest a task: "Span study guide due Thu"' : 'Add: "Hist reading p.212 due Thu"';
     $('#tabs').innerHTML = tabsFor().map(([k, l]) => `<button role="tab" data-v="${k}" aria-selected="${view === k}">${l}</button>`).join('');
-    $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => { view = b.dataset.v; render(); });
+    $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => { view = b.dataset.v; setMenu(false); render(); window.scrollTo(0, 0); });
     $('#foot').innerHTML = `Last calendar check ${esc(S.lastSync || 'not yet')} · <button class="act" id="refresh">Check calendars now</button> · <button class="act" id="signout">Sign out</button>`;
     $('#refresh').onclick = () => { toast('Checking calendars…'); api('sync'); };
     $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
@@ -1249,6 +1249,16 @@
     rl.querySelector('#torw').onclick = () => { view = 'rewards'; render(); };
     const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'To suggest a task, type it in the box at the top. Your student can accept or decline it.'; v.appendChild(p);
   }
+
+  /* ---------------- phone menu ---------------- */
+  // On narrow screens the tabs live behind a menu button in the top right corner.
+  function setMenu(open) {
+    document.body.classList.toggle('menu-open', open);
+    const b = $('#menubtn'); if (b) b.setAttribute('aria-expanded', open);
+  }
+  $('#menubtn').onclick = e => { e.stopPropagation(); setMenu(!document.body.classList.contains('menu-open')); };
+  document.addEventListener('click', e => { if (document.body.classList.contains('menu-open') && !e.target.closest('#tabs, #menubtn')) setMenu(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
 
   /* ---------------- boot ---------------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
