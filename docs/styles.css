@@ -259,3 +259,16 @@ button.pill:hover,button.pill[aria-pressed="true"]{border-color:var(--accent)}
 .task.wdone .t{text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--good) 60%,transparent)}
 .task.wdone .act{visibility:hidden}
 button.mini{font:600 12px var(--body);padding:3px 10px;margin-left:6px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--accent);cursor:pointer;vertical-align:middle}
+/* Phone menu: tabs hide behind a sticky menu button in the top right corner */
+.menubtn{display:none}
+@media (max-width:760px){
+  header.top{padding-right:58px}
+  .menubtn{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;position:fixed;top:max(10px,env(safe-area-inset-top,0px));right:max(12px,env(safe-area-inset-right,0px));z-index:40;width:46px;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);box-shadow:0 4px 14px rgb(0 0 0 / .15);cursor:pointer;padding:0}
+  .menubtn span{display:block;width:22px;height:2px;border-radius:2px;background:var(--fg);transition:transform .2s,opacity .2s}
+  body.menu-open .menubtn span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+  body.menu-open .menubtn span:nth-child(2){opacity:0}
+  body.menu-open .menubtn span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+  nav.tabs{display:none;position:fixed;top:calc(max(10px,env(safe-area-inset-top,0px)) + 54px);right:max(12px,env(safe-area-inset-right,0px));width:min(260px,calc(100vw - 24px));max-height:calc(100vh - 90px);overflow-y:auto;flex-direction:column;gap:4px;margin:0;padding:8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 32px rgb(0 0 0 / .25);z-index:40}
+  body.menu-open nav.tabs{display:flex}
+  nav.tabs button{width:100%;text-align:left;border:0;border-radius:10px;background:transparent}
+}
