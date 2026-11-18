@@ -524,6 +524,7 @@
     $('#dayline').textContent = `${nice(S.today)}${info ? ' · ' + info.title : ''}${shortToday ? ' · ' + shortToday.join(', ') : ''}`;
     $('#streak').textContent = S.streak || 0;
     $('#pts').textContent = S.points || 0;
+    document.querySelectorAll('.points .pill').forEach(b => { b.onclick = () => { view = 'rewards'; render(); window.scrollTo(0, 0); }; b.setAttribute('aria-pressed', view === 'rewards'); });
     $('#quickadd').placeholder = S.role === 'parent' ? 'Suggest a task: "Span study guide due Thu"' : 'Add: "Hist reading p.212 due Thu"';
     $('#tabs').innerHTML = tabsFor().map(([k, l]) => `<button role="tab" data-v="${k}" aria-selected="${view === k}">${l}</button>`).join('');
     $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => { view = b.dataset.v; render(); });
@@ -532,7 +533,7 @@
     $('#signout').onclick = () => { try { localStorage.removeItem('hp_token'); localStorage.removeItem('hp_cache'); } catch (e) { /* ignore */ } token = null; S = null; if (window.google) google.accounts.id.disableAutoSelect(); showSignin(); };
     const v = $('#view');
     v.innerHTML = '';
-    ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, archive: renderArchive, parent: renderParent }[view] || renderToday)(v);
+    ({ today: renderToday, week: renderWeek, status: renderStatus, classes: renderClasses, tests: renderTests, missing: renderMissing, archive: renderArchive, rewards: renderRewards, parent: renderParent }[view] || renderToday)(v);
   }
 
   function section(parent, title, items, opts, emptyText) {
@@ -1029,6 +1030,111 @@
     });
   }
 
+  /* ---------------- rewards ---------------- */
+  const EARN = [
+    ['Turn in an assignment on time', '+10', 'Turned in late: +5'],
+    ['Finish work with nothing to turn in, on time', '+10', 'Late: +5'],
+    ['Finish before the due date', '+5', 'On top of the points above'],
+    ['Go to a teacher visit', '+10', 'Tap "I went" after the visit'],
+    ['Log how long it took', '+2', 'Pick a time after marking it done'],
+    ['Bonus from Mom or Dad', 'Any', 'For great weeks and extra effort'],
+  ];
+  const STREAK_TEXT = 'Your streak is how many school days in a row you finished everything you planned for that day. Days with nothing planned don\'t count and don\'t break it. One day with planned work left undone starts it over.';
+  const POINTS_TEXT = 'Points add up toward rewards. You earn them by turning work in on time, finishing early, going to teacher visits and logging your time.';
+  let RW = null;
+  const loadRewards = () => send('rewards').then(d => { RW = d; return d; });
+  const span = (a, b) => a && b && a !== b ? `${nice(a)} – ${nice(b)}` : nice(a || b);
+  function pointRows(rows) {
+    return rows.map(r => `<div class="prow"><span class="pv${+r.points < 0 ? ' neg' : ''}">${+r.points > 0 ? '+' : ''}${esc(r.points)}</span><span class="pr">${esc(r.reason)}</span><span class="pd">${esc(nice(String(r.date).slice(0, 10)))}</span></div>`).join('');
+  }
+  function renderRewards(v) {
+    const h = document.createElement('h2'); h.className = 'pagetitle'; h.textContent = 'Rewards'; v.appendChild(h);
+    const body = document.createElement('div'); body.className = 'rewards'; v.appendChild(body);
+    const draw = d => {
+      const cur = d.current || {};
+      const fire = cur.days > 0;
+      body.innerHTML = `
+        <section class="rw-row">
+          <div class="streakcard${fire ? ' on' : ''}">
+            <div class="flame" aria-hidden="true">${fire ? '🔥' : '✨'}</div>
+            <div class="big">${esc(cur.days || 0)}</div>
+            <div class="lbl">day streak</div>
+            <div class="since">${fire && cur.start ? 'Going since ' + esc(nice(cur.start)) : 'Finish today\'s plan to start one'}</div>
+          </div>
+          <div class="rw-side">
+            <p>${esc(STREAK_TEXT)}</p>
+            <h3>Longest streaks</h3>
+            <ol class="toplist">${(d.top || []).length ? d.top.map((r, i) => `<li><span class="rank">${i + 1}</span><span class="n">${esc(r.days)} day${r.days === 1 ? '' : 's'}</span><span class="dates">${esc(span(r.start, r.end))}${r.live ? ' · <b>now</b>' : ''}</span></li>`).join('') : '<li class="hint">No streaks yet.</li>'}</ol>
+          </div>
+        </section>
+        <section class="rw-row">
+          <div class="pointscard">
+            <div class="big">${esc(d.points || 0)}</div>
+            <div class="lbl">points</div>
+            <div class="since">${esc(POINTS_TEXT)}</div>
+          </div>
+          <div class="rw-side">
+            <h3>Ways to earn points</h3>
+            <div class="earn">${EARN.map(([w, p, n]) => `<div class="erow"><span class="ep">${p}</span><span><b>${esc(w)}</b><br><span class="hint">${esc(n)}</span></span></div>`).join('')}</div>
+          </div>
+        </section>
+        <details class="acc" id="recent"><summary>Recent points</summary>
+          <div class="plist">${pointRows(d.recent.rows) || '<div class="empty">No points yet.</div>'}</div>
+          ${d.recent.total > 20 ? '<div class="row center"><button class="act w300" id="more">Load more</button></div>' : ''}
+        </details>`;
+      let shown = d.recent.rows.length;
+      const more = body.querySelector('#more');
+      if (more) more.onclick = () => {
+        more.disabled = true; more.textContent = 'Loading…';
+        send('points', { offset: shown }).then(pg => {
+          body.querySelector('.plist').insertAdjacentHTML('beforeend', pointRows(pg.rows));
+          shown += pg.rows.length;
+          more.disabled = false; more.textContent = 'Load more';
+          if (shown >= pg.total) more.remove();
+        }, () => { more.disabled = false; more.textContent = 'Load more'; });
+      };
+    };
+    if (RW) draw(RW); else body.innerHTML = '<div class="empty">Loading rewards…</div>';
+    loadRewards().then(d => { if (view === 'rewards') draw(d); }, () => { if (!RW) body.innerHTML = '<div class="empty">Could not load rewards. Try again in a moment.</div>'; });
+  }
+
+  // Parent view: what each "This week" box means, with the items behind the number.
+  function statSheet(kind, ctx) {
+    const item = (t, tag) => `<div class="srow" style="--c:${cls(t).color}"><span><b>${esc(cls(t).name ? cls(t).name + ': ' : '')}</b>${esc(t.title)}</span><span class="hint">${tag}</span></div>`;
+    let html = '';
+    if (kind === 'ahead') {
+      html = `<h3>Planned ahead: ${ctx.ahead} of ${ctx.thisWeek.length}</h3>
+        <p class="hint">Of the assignments due this week (Sunday to Saturday), how many are planned for a day before their due date. Work planned on the due day itself is cutting it close.</p>
+        <div class="list">${ctx.thisWeek.map(t => item(t, (t.doDay && t.doDay < t.due ? '<span class="tag good">Ahead</span> ' : '<span class="tag warn">Due-day</span> ') + `Plan ${esc(nice(t.doDay))} · Due ${esc(nice(t.due))}`)).join('') || '<div class="empty">Nothing due this week.</div>'}</div>`;
+    } else if (kind === 'missing') {
+      const m = S.tasks.filter(missing).sort((a, b) => a.due < b.due ? -1 : 1);
+      html = `<h3>Missing: ${m.length}</h3>
+        <p class="hint">Assignments past their due date that aren't marked turned in (or finished, for work with nothing to turn in). Algebra and Chemistry still take some late work.</p>
+        <div class="list">${m.map(t => item(t, `Was due ${esc(nice(t.due))} · ${esc(STATUS_LABEL[t.status] || t.status)}`)).join('') || '<div class="empty">Nothing missing.</div>'}</div>`;
+    } else if (kind === 'tests') {
+      html = `<h3>Tests with a visit booked: ${ctx.visited} of ${ctx.tests.length}</h3>
+        <p class="hint">Quizzes and tests this week, and whether Hudson booked (or went to) a teacher visit before each one.</p>
+        <div class="list">${ctx.tests.map(t => { const v = S.tasks.find(x => x.type === 'visit' && x.visitFor === t.id); const ok = v && (v.visitSlot || v.status === 'done');
+          return item(t, (ok ? '<span class="tag good">Visit booked</span> ' + esc(v.status === 'done' ? 'Went' : nice(v.doDay) + ', ' + v.visitSlot) : '<span class="tag warn">No visit</span>') + ` · ${esc(kindOf(t))} ${esc(nice(t.due))}`); }).join('') || '<div class="empty">No quizzes or tests this week.</div>'}</div>`;
+    } else {
+      html = `<h3>${esc(S.points || 0)} points · ${esc(S.streak || 0)}-day streak</h3>
+        <p class="hint">${esc(POINTS_TEXT.replace('You earn', (S.studentName || 'He') + ' earns'))}</p><p class="hint">${esc(STREAK_TEXT.replace(/Your|you/g, m => m === 'Your' ? 'His' : 'he'))}</p>
+        <div id="skinfo" class="hint">Loading streak dates…</div>
+        <div class="row center"><button class="act primary w300" id="gorw">Open Rewards</button></div>`;
+    }
+    sheet(html + '<div class="row"><button class="act" id="st-close">Close</button></div>', p => {
+      p.querySelector('#st-close').onclick = closeSheet;
+      const go = p.querySelector('#gorw');
+      if (go) go.onclick = () => { closeSheet(); view = 'rewards'; render(); };
+      const info = p.querySelector('#skinfo');
+      if (info) loadRewards().then(d => {
+        const c = d.current || {};
+        info.innerHTML = c.days > 0 ? `Current streak started <b>${esc(nice(c.start))}</b> and is at <b>${esc(c.days)} day${c.days === 1 ? '' : 's'}</b> as of ${esc(nice(addDays(S.today, -1)))}.${c.set ? ` A parent set it to ${esc(c.set.value)} on ${esc(nice(c.set.on))}.` : ''}`
+          : 'No streak running right now.';
+      }, () => { info.textContent = ''; });
+    });
+  }
+
   // Dismissing only hides the alert; the assignment itself is not changed. It is logged in the Archive.
   function dismissSheet(f) {
     sheet(`<h3>Dismiss this alert?</h3>
@@ -1048,7 +1154,8 @@
     });
   }
 
-  function renderParent(v) {
+  function renderParent(outer) {
+    const v = document.createElement('div'); v.className = 'pview'; outer.appendChild(v);
     const h = document.createElement('h2'); h.textContent = 'Needs attention'; v.appendChild(h);
     const flags = (S.flags || []).filter(f => f.kind !== 'Gradebook disagrees');
     const conflicts = openConflicts();
@@ -1057,18 +1164,19 @@
     fl.innerHTML = flags.length ? flags.map((f, i) => `<div class="flag"><b>${esc(f.kind)}</b><span>${esc(f.text)}</span>${f.key ? `<button class="act" data-dis="${i}">Dismiss</button>` : ''}</div>`).join('') : (conflicts.length ? '' : '<div class="flag ok"><b>All clear</b><span>Nothing missing or overdue.</span></div>');
     v.appendChild(fl);
     fl.querySelectorAll('[data-dis]').forEach(b => b.onclick = () => dismissSheet(flags[+b.dataset.dis]));
-    const wk = mondayOf(S.today);
+    const wk = sundayOf(S.today);
     const thisWeek = S.tasks.filter(t => t.type === 'assignment' && t.due >= wk && t.due < addDays(wk, 7));
     const ahead = thisWeek.filter(t => t.doDay && t.doDay < t.due).length;
     const tests = S.tasks.filter(t => (t.type === 'quiz' || t.type === 'test') && t.due >= wk && t.due < addDays(wk, 7));
     const visited = tests.filter(t => S.tasks.some(x => x.type === 'visit' && x.visitFor === t.id && (x.visitSlot || x.status === 'done'))).length;
     const h2 = document.createElement('h2'); h2.textContent = 'This week'; v.appendChild(h2);
     const stat = document.createElement('div'); stat.className = 'stat';
-    stat.innerHTML = `<div><strong>${ahead} of ${thisWeek.length}</strong>planned ahead</div><div><strong>${S.tasks.filter(missing).length}</strong>missing</div><div><strong>${visited} of ${tests.length}</strong>tests with a visit booked</div><div><strong>${S.points || 0}</strong>points · ${S.streak || 0}-day streak</div>`;
+    stat.innerHTML = `<button data-k="ahead"><strong>${ahead} of ${thisWeek.length}</strong>planned ahead</button><button data-k="missing"><strong>${S.tasks.filter(missing).length}</strong>missing</button><button data-k="tests"><strong>${visited} of ${tests.length}</strong>tests with a visit booked</button><button data-k="points"><strong>${S.points || 0}</strong>points · ${S.streak || 0}-day streak</button>`;
     v.appendChild(stat);
+    stat.querySelectorAll('[data-k]').forEach(b => b.onclick = () => statSheet(b.dataset.k, { ahead, thisWeek, tests, visited }));
     const h3 = document.createElement('h2'); h3.textContent = 'Paste grades'; v.appendChild(h3);
     const box = document.createElement('div'); box.className = 'block';
-    box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the whole Veracross Grade Detail page, any day. One class or all of them."></textarea><div class="row"><button class="act primary" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
+    box.innerHTML = `<textarea id="grades" rows="4" class="field" style="font:14px var(--body);padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)" placeholder="Paste the whole Veracross Grade Detail page, any day. One class or all of them."></textarea><div class="row center"><button class="act primary w300" id="savegrades">Save grades</button></div><div class="hint">${S.lastGrades ? 'Last pasted ' + esc(S.lastGrades.pastedAt) : 'Nothing pasted yet.'}</div>`;
     v.appendChild(box);
     box.querySelector('#savegrades').onclick = () => {
       const t = box.querySelector('#grades').value.trim();
@@ -1088,8 +1196,13 @@
       v.appendChild(info);
     }
     const resolved = S.tasks.filter(t => t.conflictState === 'resolved').sort((a, b) => a.confirmedAt < b.confirmedAt ? 1 : -1);
-    if (resolved.length) conflictList(v, resolved, 'Confirmed grades');
-    const hin = document.createElement('h2'); hin.textContent = 'Recently turned in'; v.appendChild(hin);
+    if (resolved.length) {
+      const acc = document.createElement('details'); acc.className = 'acc';
+      acc.innerHTML = `<summary>Confirmed grades (${resolved.length})</summary>`;
+      conflictList(acc, resolved);
+      v.appendChild(acc);
+    }
+    const accIn = document.createElement('details'); accIn.className = 'acc'; v.appendChild(accIn);
     const since = addDays(S.today, -14);
     const turned = S.tasks.filter(t => t.turnedInAt && t.turnedInAt.slice(0, 10) >= since && isWork(t))
       .sort((a, b) => a.turnedInAt < b.turnedInAt ? 1 : -1).slice(0, 20);
@@ -1103,11 +1216,12 @@
       if (!tags.length) tags.push('<span class="tag good">On time</span>');
       return `<div class="task" style="--c:${cls(t).color}"><div class="main"><div class="t">${esc(cls(t).name ? cls(t).name + ': ' : '')}${esc(t.title)}</div><div class="meta"><span>Due ${esc(nice(t.due))}</span><span>Done ${esc(nice(doneDay))}</span><span>Turned in ${esc(nice(inDay))}</span>${tags.join('')}</div></div></div>`;
     }).join('') || '<div class="empty">Nothing turned in over the last two weeks.</div>';
-    v.appendChild(tl);
+    accIn.innerHTML = `<summary>Recently turned in (${turned.length})</summary>`;
+    accIn.appendChild(tl);
     const hr = document.createElement('h2'); hr.textContent = 'Reward points'; v.appendChild(hr);
     const rw = document.createElement('div'); rw.className = 'block';
     rw.innerHTML = `<div class="row adj"><label class="field">Points<input type="number" id="bpts" inputmode="numeric" step="1" value="10"></label><label class="field grow">Reason (optional)<input id="bwhy" maxlength="100" placeholder="Great week of turning things in"></label></div>
-      <div class="row"><button class="act primary" id="bgive">Give points</button></div><div class="hint">Use a minus number to take points back.</div>`;
+      <div class="row center"><button class="act primary w300" id="bgive">Give points</button></div><div class="hint">Use a minus number to take points back.</div>`;
     v.appendChild(rw);
     rw.querySelector('#bgive').onclick = () => {
       const n = Math.round(Number(rw.querySelector('#bpts').value));
@@ -1116,18 +1230,15 @@
     };
     const hs = document.createElement('h2'); hs.textContent = 'Streak'; v.appendChild(hs);
     const sk = document.createElement('div'); sk.className = 'block';
-    sk.innerHTML = `<div class="row adj"><label class="field">Set streak to<input type="number" id="snum" inputmode="numeric" min="0" step="1" value="${esc(S.streak || 0)}"></label></div>
-      <div class="row"><button class="act" id="sset">Set streak</button></div><div class="hint">It keeps counting from this number. A day with planned work left undone still resets it.</div>`;
+    sk.innerHTML = `<div class="row adj inline"><label class="field">Set streak to<input type="number" id="snum" inputmode="numeric" min="0" step="1" value="${esc(S.streak || 0)}"></label><button class="act primary w300" id="sset">Set streak</button></div><div class="hint">It keeps counting from this number. A day with planned work left undone still resets it.</div>`;
     v.appendChild(sk);
     sk.querySelector('#sset').onclick = () => {
       const n = Math.round(Number(sk.querySelector('#snum').value));
       if (!(n >= 0)) { toast('Enter 0 or more'); return; }
       api('setStreak', { streak: n }).then(() => toast(`Streak set to ${n}`), e => toast(e.message));
     };
-    const h4 = document.createElement('h2'); h4.textContent = 'Recent points'; v.appendChild(h4);
-    const pts = document.createElement('div'); pts.className = 'list';
-    pts.innerHTML = (S.recentPoints || []).map(r => `<div class="hint">${esc(r.date)} · +${esc(r.points)} · ${esc(r.reason)}</div>`).join('') || '<div class="empty">No points yet.</div>';
-    v.appendChild(pts);
+    const rl = document.createElement('p'); rl.className = 'hint'; rl.innerHTML = 'Recent points are on the <button class="linkbtn" id="torw">Rewards page</button> (tap the streak or points at the top).'; v.appendChild(rl);
+    rl.querySelector('#torw').onclick = () => { view = 'rewards'; render(); };
     const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'To suggest a task, type it in the box at the top. Your student can accept or decline it.'; v.appendChild(p);
   }
 

@@ -741,6 +741,58 @@ function streak(tasks, today) {
   return n;
 }
 
+/**
+ * Every streak run, using the same rule as streak(): a day with planned work counts when all of it
+ * was done that day or earlier; days with nothing planned don't break a run. Newest run last.
+ */
+function streakRuns(tasks, today) {
+  const days = {};
+  tasks.forEach(t => { if (t.doDay && t.doDay < today && t.type !== 'visit') (days[t.doDay] = days[t.doDay] || []).push(t); });
+  const dates = Object.keys(days).sort();
+  const runs = [];
+  let cur = null;
+  dates.forEach(d => {
+    const ok = days[d].every(t => (t.doneAt && t.doneAt.slice(0, 10) <= d) || (t.turnedInAt && t.turnedInAt.slice(0, 10) <= d));
+    if (ok) {
+      if (!cur) { cur = { start: d, end: d, days: 0 }; runs.push(cur); }
+      cur.end = d; cur.days++;
+    } else {
+      cur = null;
+    }
+  });
+  return runs;
+}
+
+/** Data for the Rewards page: streak now and its best runs, plus the newest points. */
+function rewardsData(tasks, today) {
+  let set = null;
+  try { set = JSON.parse(PropertiesService.getScriptProperties().getProperty('STREAK_SET') || 'null'); } catch (e) { set = null; }
+  const runs = streakRuns(tasks, today);
+  const now = streak(tasks, today);
+  const last = runs[runs.length - 1];
+  // A streak above 0 means the newest run is still going. If a parent set the number,
+  // count back from the day they set it.
+  const current = { days: now, start: '', set: set };
+  if (now > 0) {
+    if (set && set.on) current.start = addDays(set.on, -Number(set.value || 0));
+    else if (last) current.start = last.start;
+  }
+  const all = runs.slice();
+  if (now > 0) {
+    if (last && !set) all.pop();
+    all.push({ start: current.start, end: addDays(today, -1), days: now, live: true });
+  }
+  const top = all.sort((a, b) => b.days - a.days || (a.end < b.end ? 1 : -1)).slice(0, 5);
+  return { current: current, top: top, points: pointsTotal(), recent: pointsPage(0) };
+}
+
+/** 20 point entries at a time, newest first. */
+function pointsPage(offset) {
+  const rows = readRows('Points').reverse();
+  const o = Math.max(0, Math.round(Number(offset) || 0));
+  return { rows: rows.slice(o, o + 20), total: rows.length, offset: o };
+}
+
 /* ------------------------------------------------------------------ red flags */
 
 function redFlags(tasks, today) {
@@ -834,6 +886,8 @@ function handle(req, who) {
   if (req.action === 'load') return loadAll(who);
   if (req.action === 'sync') { syncAll(); return loadAll(who); }
   if (req.action === 'archive') return archiveData();
+  if (req.action === 'rewards') return rewardsData(readTasks(), today);
+  if (req.action === 'points') return pointsPage(req.offset);
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1048,7 +1102,6 @@ function loadAll(who, tasksIn) {
     out.flags = redFlags(tasks, today);
     const g = readRows('Grades');
     out.lastGrades = g.length ? g[g.length - 1] : null;
-    out.recentPoints = readRows('Points').slice(-20).reverse();
     try { out.gradeCheck = JSON.parse(PropertiesService.getScriptProperties().getProperty('GRADE_CHECK') || 'null'); } catch (e) { out.gradeCheck = null; }
   }
   return out;
